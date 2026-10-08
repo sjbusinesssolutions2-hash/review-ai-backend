@@ -9,23 +9,26 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Initialize AI & Payments
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// Initialize Gemini AI & Razorpay
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || 'dummy_key' });
 const razorpay = new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET
+    key_id: process.env.RAZORPAY_KEY_ID || 'dummy_id',
+    key_secret: process.env.RAZORPAY_KEY_SECRET || 'dummy_secret'
 });
 
-// Google OAuth Setup
+// Google OAuth Client Setup
 const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
     process.env.GOOGLE_REDIRECT_URI
 );
 
-app.get('/', (req, res) => res.send('Review AI Backend is Running!'));
+// Health Check Endpoint
+app.get('/', (req, res) => {
+    res.send('Review AI Backend Server is Running!');
+});
 
-// Google Auth Redirect
+// 1. Google OAuth Authorization
 app.get('/auth/google', (req, res) => {
     const url = oauth2Client.generateAuthUrl({
         access_type: 'offline',
@@ -34,15 +37,21 @@ app.get('/auth/google', (req, res) => {
     res.redirect(url);
 });
 
-// Google OAuth Callback
+// 2. Google OAuth Callback
 app.get('/auth/google/callback', async (req, res) => {
-    const { code } = req.query;
-    const { tokens } = await oauth2Client.getToken(code);
-    oauth2Client.setCredentials(tokens);
-    res.send("Google Business Profile Connected Successfully!");
+    try {
+        const { code } = req.query;
+        if (code) {
+            const { tokens } = await oauth2Client.getToken(code);
+            oauth2Client.setCredentials(tokens);
+        }
+        res.send("Google Business Profile connected successfully!");
+    } catch (error) {
+        res.status(500).send("Auth error: " + error.message);
+    }
 });
 
-// Create Razorpay Subscription
+// 3. Create Subscription
 app.post('/api/create-subscription', async (req, res) => {
     try {
         const { planId, customerEmail } = req.body;
@@ -59,7 +68,7 @@ app.post('/api/create-subscription', async (req, res) => {
     }
 });
 
-// Webhook for Incoming Reviews & AI Replies
+// 4. Webhook for Reviews & AI Auto-Reply
 app.post('/webhook/google-review', async (req, res) => {
     try {
         const { reviewText, starRating, reviewId, businessName, supportEmail } = req.body;
@@ -80,12 +89,15 @@ app.post('/webhook/google-review', async (req, res) => {
             contents: prompt,
         });
 
-        const aiReply = response.text.trim();
-        const mybusiness = google.mybusinessreviews({ version: 'v1', auth: oauth2Client });
-        await mybusiness.accounts.locations.reviews.updateReply({
-            name: reviewId,
-            requestBody: { comment: aiReply }
-        });
+        const aiReply = response.text ? response.text.trim() : "Thank you for your feedback!";
+        
+        if (reviewId) {
+            const mybusiness = google.mybusinessreviews({ version: 'v1', auth: oauth2Client });
+            await mybusiness.accounts.locations.reviews.updateReply({
+                name: reviewId,
+                requestBody: { comment: aiReply }
+            });
+        }
 
         res.status(200).json({ status: "success", reply: aiReply });
     } catch (error) {
@@ -93,5 +105,6 @@ app.post('/webhook/google-review', async (req, res) => {
     }
 });
 
+// Start Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
