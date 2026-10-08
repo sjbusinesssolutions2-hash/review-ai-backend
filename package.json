@@ -1,6 +1,7 @@
 {
   "name": "review-ai-backend",
   "version": "1.0.0",
+  "description": "Backend engine for Review AI",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
