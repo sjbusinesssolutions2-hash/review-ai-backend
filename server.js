@@ -16,27 +16,26 @@ mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('Connected to MongoDB database'))
     .catch(err => console.error('MongoDB connection error:', err));
 
-// Define User Schema for storing tokens
+// User Schema
 const UserSchema = new mongoose.Schema({
     googleId: { type: String, required: true, unique: true },
     tokens: { type: Object, required: true }
 });
 const User = mongoose.model('User', UserSchema);
 
-// Enable CORS
-app.use(cors({
-    origin: 'https://sjbusinesssolutions2-hash.github.io'
-}));
+// Helper delay function to respect API rate limits
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// Initialize Google OAuth2 Client
 const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
     'https://review-ai-backend-03sb.onrender.com/auth/google/callback'
 );
 
-// 1. Initiate Google Sign-In
+// Auth endpoints
 app.get('/auth/google', (req, res) => {
     const scopes = [
         'https://www.googleapis.com/auth/userinfo.profile',
@@ -53,42 +52,36 @@ app.get('/auth/google', (req, res) => {
     res.redirect(url);
 });
 
-// 2. Google OAuth Callback
 app.get('/auth/google/callback', async (req, res) => {
     const { code } = req.query;
-
-    if (!code) {
-        return res.status(400).send('Authorization code missing.');
-    }
+    if (!code) return res.status(400).send('Authorization code missing.');
 
     try {
         const { tokens } = await oauth2Client.getToken(code);
         oauth2Client.setCredentials(tokens);
 
-        // Fetch user info to store against googleId
         const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
         const userInfo = await oauth2.userinfo.get();
 
-        // Save or update user tokens in MongoDB
         await User.findOneAndUpdate(
             { googleId: userInfo.data.id },
             { tokens: tokens },
             { upsert: true, new: true }
         );
 
-        console.log(`User ${userInfo.data.email} connected and tokens saved to database.`);
+        console.log(`User ${userInfo.data.email} connected.`);
+        
+        // Delay 3 seconds before first review run to let tokens settle
+        setTimeout(processGoogleReviews, 3000);
 
-        // Run an immediate check for reviews
-        processGoogleReviews();
-
-        res.redirect('https://sjbusinesssolutions2-hash.github.io/review-ai-app/?status=connected');
+        res.redirect('https://solutions2-hash.github.io/review-ai-app/?status=connected');
     } catch (error) {
-        console.error('Error during OAuth callback:', error);
-        res.redirect('https://sjbusinesssolutions2-hash.github.io/review-ai-app/?status=error');
+        console.error('OAuth Callback Error:', error);
+        res.redirect('https://solutions2-hash.github.io/review-ai-app/?status=error');
     }
 });
 
-// Helper function: Generate AI review response
+// AI Reply Generator
 async function generateAiReply(reviewText, starRating) {
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     const prompt = `You are a polite, professional business owner. Write a concise, warm reply to this Google review:
@@ -100,7 +93,7 @@ async function generateAiReply(reviewText, starRating) {
     return result.response.text();
 }
 
-// 3. AUTOMATED ENGINE: Fetch unreplied reviews for ALL connected users in DB
+// Background review processing loop with rate limiting
 async function processGoogleReviews() {
     try {
         const users = await User.find();
@@ -112,10 +105,10 @@ async function processGoogleReviews() {
 
             const accountsRes = await mybusiness.accounts.list();
             const accounts = accountsRes.data.accounts;
-
             if (!accounts || accounts.length === 0) continue;
 
             for (const account of accounts) {
+                await delay(1000); // 1s pause between requests
                 const mybusinessInfo = google.mybusinessbusinessinformation({ version: 'v1', auth: oauth2Client });
                 const locationsRes = await mybusinessInfo.accounts.locations.list({
                     parent: account.name,
@@ -125,6 +118,7 @@ async function processGoogleReviews() {
                 const locations = locationsRes.data.locations || [];
 
                 for (const loc of locations) {
+                    await delay(1000);
                     const reviewsUrl = `https://mybusiness.googleapis.com/v4/${loc.name}/reviews`;
                     const reviewsRes = await oauth2Client.request({ url: reviewsUrl });
                     const reviews = reviewsRes.data.reviews || [];
@@ -139,6 +133,7 @@ async function processGoogleReviews() {
 
                             const aiReply = await generateAiReply(reviewText, numericRating);
 
+                            await delay(1000);
                             await oauth2Client.request({
                                 url: `${reviewsUrl}/${review.reviewId}/reply`,
                                 method: 'PUT',
@@ -156,14 +151,9 @@ async function processGoogleReviews() {
     }
 }
 
-// Run review automation every 5 minutes
-setInterval(processGoogleReviews, 5 * 60 * 1000);
+// Run check every 15 minutes
+setInterval(processGoogleReviews, 15 * 60 * 1000);
 
-// Health check endpoint
-app.get('/', (req, res) => {
-    res.send('Review AI Backend is active and running!');
-});
+app.get('/', (req, res) => res.send('Review AI Backend is active!'));
 
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
