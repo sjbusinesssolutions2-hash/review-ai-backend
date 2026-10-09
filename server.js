@@ -10,13 +10,13 @@ const PORT = process.env.PORT || 3000;
 // Initialize Gemini AI Client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Enable CORS
+// Enable CORS for frontend
 app.use(cors({
     origin: 'https://sjbusinesssolutions2-hash.github.io'
 }));
 app.use(express.json());
 
-// Store connected user's OAuth tokens (In production, save to database)
+// In-memory token storage (In production, replace with MongoDB or Supabase)
 let userTokens = null;
 
 // Initialize Google OAuth2 Client
@@ -53,13 +53,13 @@ app.get('/auth/google/callback', async (req, res) => {
 
     try {
         const { tokens } = await oauth2Client.getToken(code);
-        userTokens = tokens; // Save session tokens
+        userTokens = tokens; // Save active user tokens
         oauth2Client.setCredentials(tokens);
 
         console.log('User connected successfully!');
         
-        // Start background auto-reply loop as soon as connected
-        startAutoReplyEngine();
+        // Trigger initial check immediately upon connection
+        processGoogleReviews();
 
         res.redirect('https://sjbusinesssolutions2-hash.github.io/review-ai-app/?status=connected');
     } catch (error) {
@@ -68,60 +68,89 @@ app.get('/auth/google/callback', async (req, res) => {
     }
 });
 
-// Helper function: Generate response using Gemini AI
+// Helper function: Generate AI review response
 async function generateAiReply(reviewText, starRating) {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-    const prompt = `You are a polite, professional business owner. Write a concise, friendly reply to this Google customer review:
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const prompt = `You are a polite, professional business owner. Write a concise, warm reply to this Google review:
     Star Rating: ${starRating}/5
     Review: "${reviewText}"
-    Keep it under 3 sentences.`;
+    Keep response brief, appreciative, and under 3 sentences.`;
 
     const result = await model.generateContent(prompt);
     return result.response.text();
 }
 
-// 3. Test API Endpoint (Fixed Gemini Model)
-app.post('/api/generate-reply', async (req, res) => {
-    try {
-        const { reviewText, starRating } = req.body;
-        if (!reviewText) return res.status(400).json({ error: 'Missing review text' });
-
-        const reply = await generateAiReply(reviewText, starRating || 5);
-        res.json({ success: true, reply });
-    } catch (error) {
-        console.error('AI Error:', error);
-        res.status(500).json({ error: 'Failed to generate AI response. Check GEMINI_API_KEY on Render.' });
-    }
-});
-
-// 4. AUTOMATED ENGINE: Periodically fetches & replies to Google Reviews
+// 3. COMPLETE AUTOMATED ENGINE: Fetch unreplied reviews & post AI replies to Google
 async function processGoogleReviews() {
-    if (!userTokens) return;
+    if (!userTokens) {
+        console.log('No connected account tokens found. Skipping auto-reply check.');
+        return;
+    }
 
     try {
         oauth2Client.setCredentials(userTokens);
         const mybusiness = google.mybusinessaccountmanagement({ version: 'v1', auth: oauth2Client });
 
-        // Fetch connected accounts
+        // Step A: Fetch connected Google Business accounts
         const accountsRes = await mybusiness.accounts.list();
         const accounts = accountsRes.data.accounts;
 
-        if (!accounts || accounts.length === 0) return;
+        if (!accounts || accounts.length === 0) {
+            console.log('No Google Business accounts found for this user.');
+            return;
+        }
 
-        console.log('Checking for new Google Reviews automatically...');
-        // Here, the engine iterates through accounts & locations, fetches unreplied reviews,
-        // generates a reply using generateAiReply(), and posts back to Google.
+        console.log(`Checking ${accounts.length} business account(s) for unreplied reviews...`);
+
+        for (const account of accounts) {
+            // Step B: Fetch locations under the business account
+            const mybusinessInfo = google.mybusinessbusinessinformation({ version: 'v1', auth: oauth2Client });
+            const locationsRes = await mybusinessInfo.accounts.locations.list({
+                parent: account.name,
+                readMask: 'name,title'
+            });
+
+            const locations = locationsRes.data.locations || [];
+
+            for (const loc of locations) {
+                // Step C: Fetch reviews via My Business API
+                const reviewsUrl = `https://mybusiness.googleapis.com/v4/${loc.name}/reviews`;
+                const reviewsRes = await oauth2Client.request({ url: reviewsUrl });
+                const reviews = reviewsRes.data.reviews || [];
+
+                for (const review of reviews) {
+                    // Step D: Check if review has no reply yet
+                    if (!review.reviewReply) {
+                        const reviewText = review.comment || "No text provided (Star Rating only)";
+                        const numericRating = review.starRating === 'FIVE' ? 5 :
+                                              review.starRating === 'FOUR' ? 4 :
+                                              review.starRating === 'THREE' ? 3 :
+                                              review.starRating === 'TWO' ? 2 : 1;
+
+                        console.log(`New unreplied review found: "${reviewText}" (${numericRating} stars)`);
+
+                        // Step E: Generate AI response
+                        const aiReply = await generateAiReply(reviewText, numericRating);
+
+                        // Step F: Post reply back to Google
+                        await oauth2Client.request({
+                            url: `${reviewsUrl}/${review.reviewId}/reply`,
+                            method: 'PUT',
+                            data: { comment: aiReply }
+                        });
+
+                        console.log(`Successfully posted AI reply to review ID: ${review.reviewId}`);
+                    }
+                }
+            }
+        }
     } catch (error) {
-        console.error('Auto-reply background task error:', error?.message || error);
+        console.error('Error during Google Reviews processing:', error?.response?.data || error.message);
     }
 }
 
-// Run the auto-reply engine automatically every 5 minutes
-function startAutoReplyEngine() {
-    console.log('Automated Review Response Engine Started!');
-    processGoogleReviews();
-    setInterval(processGoogleReviews, 5 * 60 * 1000); 
-}
+// Run auto-reply engine every 5 minutes
+setInterval(processGoogleReviews, 5 * 60 * 1000);
 
 // Health check endpoint
 app.get('/', (req, res) => {
