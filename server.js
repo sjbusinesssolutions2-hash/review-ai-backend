@@ -69,7 +69,7 @@ app.post('/api/generate-reply', async (req, res) => {
             return res.status(400).json({ error: 'Missing reviewText or starRating' });
         }
 
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         
         const prompt = `You are a polite, professional business owner. Write a concise reply to this customer review.
         Star Rating: ${starRating}/5 stars
