@@ -119,14 +119,14 @@ app.get('/api/locations', async (req, res) => {
   }
 });
 
-// Robust Gemini AI Generator with retry logic and active production models
+// Resilient Gemini Generator with background retries for active 3.x models
 async function generateGeminiReply(prompt, apiKey) {
-  const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+  const models = ['gemini-3.8-flash', 'gemini-3.5-flash-lite'];
 
   for (const model of models) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        console.log(`Attempting Gemini generation with model: ${model} (Attempt ${attempt})`);
+        console.log(`[Attempt ${attempt}] Requesting Gemini model: ${model}...`);
         const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -134,21 +134,25 @@ async function generateGeminiReply(prompt, apiKey) {
         });
 
         const aiData = await aiRes.json();
-        console.log(`Response from ${model}:`, JSON.stringify(aiData));
 
         if (aiData.candidates && aiData.candidates[0]?.content?.parts?.[0]?.text) {
+          console.log(`Success with model ${model}`);
           return aiData.candidates[0].content.parts[0].text.trim();
         }
 
-        // If high-demand spike (503/429), pause briefly and retry
-        if (aiData.error && (aiData.error.code === 503 || aiData.error.code === 429)) {
-          console.log(`Model ${model} busy. Waiting 1.5s before retry...`);
-          await new Promise(resolve => setTimeout(resolve, 1500));
-        } else {
-          break; // Next model if it's another non-retryable error
+        if (aiData.error) {
+          console.log(`Gemini (${model}) API Error:`, aiData.error.message);
+          // If busy or high demand (503/429), pause and retry
+          if (aiData.error.code === 503 || aiData.error.code === 429) {
+            console.log(`High demand on ${model}. Retrying in 5 seconds...`);
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          } else {
+            break; // Try next model if non-retryable
+          }
         }
       } catch (err) {
-        console.error(`Error calling model ${model}:`, err.message);
+        console.error(`Fetch exception for ${model}:`, err.message);
+        await new Promise(resolve => setTimeout(resolve, 3000));
       }
     }
   }
@@ -226,9 +230,8 @@ app.post('/api/reviews/autopilot', async (req, res) => {
 
       let replyText = await generateGeminiReply(prompt, apiKey);
 
-      // Explicit error handling
       if (!replyText) {
-        replyText = `ERROR: Gemini API key invalid or quota exceeded. Check Render logs.`;
+        replyText = `ERROR: Gemini API busy or key invalid. Check Render logs.`;
       }
 
       // Automatically Post Reply to Google API (or simulate if mock review)
