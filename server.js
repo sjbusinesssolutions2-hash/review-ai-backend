@@ -1,3 +1,15 @@
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+require('dotenv').config();
+
+const app = express();
+
+// Middleware
+app.use(express.json());
+app.use(cors());
+
+// Global Error Catching for Debugging
 process.on('uncaughtException', (err) => {
   console.error('UNCAUGHT EXCEPTION:', err);
 });
@@ -5,28 +17,41 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('UNHANDLED REJECTION:', reason);
 });
 
+// Connect to MongoDB Database
+const MONGO_URI = process.env.MONGO_URI || '';
+if (MONGO_URI) {
+  mongoose.connect(MONGO_URI)
+    .then(() => console.log('Connected to MongoDB database'))
+    .catch(err => console.error('MongoDB connection error:', err));
+} else {
+  console.log('No MongoDB URI provided, running without database connection.');
+}
 
-const express = require('express');
-const app = express();
-
-app.use(express.json());
-
-// 1. Fetch Location ID
+// 1. Fetch Location ID Route
 app.get('/api/locations', async (req, res) => {
   try {
-    const accessToken = req.user.accessToken; // Retrieved from your user session/database
+    const accessToken = req.headers.authorization ? req.headers.authorization.split(' ')[1] : null;
+    if (!accessToken) {
+      return res.status(401).json({ success: false, error: 'No access token provided' });
+    }
 
     const accountRes = await fetch('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
     const accountData = await accountRes.json();
-    const accountName = accountData.accounts[0].name; // e.g., "accounts/12345"
+    if (!accountData.accounts || accountData.accounts.length === 0) {
+      return res.status(404).json({ success: false, error: 'No accounts found' });
+    }
+    const accountName = accountData.accounts[0].name;
 
     const locationRes = await fetch(`https://mybusinessinformation.googleapis.com/v1/${accountName}/locations`, {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
     const locationData = await locationRes.json();
-    const locationName = locationData.locations[0].name; // e.g., "accounts/12345/locations/67890"
+    if (!locationData.locations || locationData.locations.length === 0) {
+      return res.status(404).json({ success: false, error: 'No locations found' });
+    }
+    const locationName = locationData.locations[0].name;
 
     res.json({ success: true, locationName });
   } catch (error) {
@@ -37,8 +62,12 @@ app.get('/api/locations', async (req, res) => {
 // 2. Fetch Live Reviews Directly from Google
 app.get('/api/reviews', async (req, res) => {
   try {
-    const accessToken = req.user.accessToken;
-    const locationName = req.user.locationName; // Stored from the step above
+    const accessToken = req.headers.authorization ? req.headers.authorization.split(' ')[1] : null;
+    const locationName = req.query.locationName;
+
+    if (!accessToken || !locationName) {
+      return res.status(400).json({ success: false, error: 'Missing access token or locationName' });
+    }
 
     const response = await fetch(`https://mybusiness.googleapis.com/v4/${locationName}/reviews`, {
       headers: { 'Authorization': `Bearer ${accessToken}` }
@@ -54,9 +83,12 @@ app.get('/api/reviews', async (req, res) => {
 // 3. Post Manual or Edited Reply to Google
 app.post('/api/reviews/reply', async (req, res) => {
   try {
-    const accessToken = req.user.accessToken;
+    const accessToken = req.headers.authorization ? req.headers.authorization.split(' ')[1] : null;
     const { reviewName, replyText } = req.body; 
-    // reviewName format: "accounts/123/locations/456/reviews/789"
+
+    if (!accessToken || !reviewName) {
+      return res.status(400).json({ success: false, error: 'Missing access token or reviewName' });
+    }
 
     const response = await fetch(`https://mybusiness.googleapis.com/v4/${reviewName}/reply`, {
       method: 'PUT',
@@ -72,4 +104,10 @@ app.post('/api/reviews/reply', async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+// Start Server persistently on Render's assigned port
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
