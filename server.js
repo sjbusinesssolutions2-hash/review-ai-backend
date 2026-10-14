@@ -119,27 +119,37 @@ app.get('/api/locations', async (req, res) => {
   }
 });
 
-// Robust Gemini AI Generator using v1beta endpoint and modern models
+// Robust Gemini AI Generator with retry logic and active production models
 async function generateGeminiReply(prompt, apiKey) {
-  const models = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'];
+  const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
 
   for (const model of models) {
-    try {
-      console.log(`Attempting Gemini generation with model: ${model}`);
-      const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-      });
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        console.log(`Attempting Gemini generation with model: ${model} (Attempt ${attempt})`);
+        const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+        });
 
-      const aiData = await aiRes.json();
-      console.log(`Response from ${model}:`, JSON.stringify(aiData));
+        const aiData = await aiRes.json();
+        console.log(`Response from ${model}:`, JSON.stringify(aiData));
 
-      if (aiData.candidates && aiData.candidates[0]?.content?.parts?.[0]?.text) {
-        return aiData.candidates[0].content.parts[0].text.trim();
+        if (aiData.candidates && aiData.candidates[0]?.content?.parts?.[0]?.text) {
+          return aiData.candidates[0].content.parts[0].text.trim();
+        }
+
+        // If high-demand spike (503/429), pause briefly and retry
+        if (aiData.error && (aiData.error.code === 503 || aiData.error.code === 429)) {
+          console.log(`Model ${model} busy. Waiting 1.5s before retry...`);
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        } else {
+          break; // Next model if it's another non-retryable error
+        }
+      } catch (err) {
+        console.error(`Error calling model ${model}:`, err.message);
       }
-    } catch (err) {
-      console.error(`Error calling model ${model}:`, err.message);
     }
   }
   return null;
@@ -216,7 +226,7 @@ app.post('/api/reviews/autopilot', async (req, res) => {
 
       let replyText = await generateGeminiReply(prompt, apiKey);
 
-      // If AI completely fails, output explicit indicator instead of masking it as static text
+      // Explicit error handling
       if (!replyText) {
         replyText = `ERROR: Gemini API key invalid or quota exceeded. Check Render logs.`;
       }
