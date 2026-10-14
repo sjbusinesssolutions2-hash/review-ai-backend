@@ -58,19 +58,32 @@ app.get('/api/reviews', async (req, res) => {
       return res.status(401).json({ success: false, error: 'No access token provided' });
     }
     const accessToken = authHeader.split(' ')[1];
-    const locationName = req.query.locationName;
+    const locationName = req.query.locationName; // e.g., "locations/123456789"
 
     if (!locationName) {
       return res.status(400).json({ success: false, error: 'Missing locationName parameter' });
     }
 
+    // Correct API endpoint for reviews
     const response = await fetch(`https://mybusiness.googleapis.com/v4/${locationName}/reviews`, {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
+
+    const responseText = await response.text();
     
-    const data = await response.json();
+    // Check if Google returned an HTML error page instead of JSON
+    if (responseText.startsWith('<!DOCTYPE') || responseText.startsWith('<html')) {
+      console.error('Google Reviews API returned HTML error:', responseText);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Google Reviews API rejected the request (HTML error response). Check if the v4 API scope is enabled.' 
+      });
+    }
+
+    const data = JSON.parse(responseText);
     res.json({ success: true, reviews: data.reviews || [] });
   } catch (error) {
+    console.error('Server error in /api/reviews:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
