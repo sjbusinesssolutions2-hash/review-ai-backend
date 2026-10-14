@@ -36,42 +36,49 @@ app.get('/api/locations', async (req, res) => {
     }
     const accessToken = authHeader.split(' ')[1];
 
-    // 1. Get Accounts
     const accountRes = await fetch('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
     const accountData = await accountRes.json();
-    console.log("ACCOUNT DATA:", JSON.stringify(accountData));
 
     if (!accountData.accounts || accountData.accounts.length === 0) {
-      return res.status(404).json({ success: false, error: 'No Google Business accounts found.' });
+      return res.status(404).json({ success: false, error: 'No Google Business accounts found for this user.' });
     }
 
-    // Loop through accounts to find locations
+    let foundLocationName = null;
+
     for (const account of accountData.accounts) {
-      const accountName = account.name; // e.g. "accounts/12345"
+      const accountName = account.name; // e.g., "accounts/109345..."
       
       const locationRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${accountName}/locations`, {
         headers: { 'Authorization': `Bearer ${accessToken}` }
       });
       const locationData = await locationRes.json();
-      console.log(`LOCATIONS FOR ${accountName}:`, JSON.stringify(locationData));
 
       if (locationData.locations && locationData.locations.length > 0) {
         let verifiedLocation = locationData.locations.find(loc => 
           loc.verificationState === 'VERIFIED' || !loc.verificationState
         ) || locationData.locations[0];
-
-        return res.json({ success: true, locationName: verifiedLocation.name });
+        
+        foundLocationName = verifiedLocation.name;
+        break;
       }
     }
 
-    res.status(404).json({ success: false, error: 'No locations found in any account for this user.' });
+    if (!foundLocationName) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'No locations found. Ensure the manager email is actively mapped to the verified profile in Google Business Profile.' 
+      });
+    }
+
+    res.json({ success: true, locationName: foundLocationName });
   } catch (error) {
     console.error('Server error in /api/locations:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
 
 // 2. Fetch Live Reviews Directly from Google
 app.get('/api/reviews', async (req, res) => {
