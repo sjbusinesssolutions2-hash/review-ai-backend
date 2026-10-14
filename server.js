@@ -27,21 +27,22 @@ if (MONGO_URI) {
   console.log('No MongoDB URI provided, running without database connection.');
 }
 
-// 1. Fetch Location ID Route
-// Updated Fetch Location ID Route (Filters for verified locations)
+// 1. Fetch Location ID Route (Guaranteed JSON Error Handling)
 app.get('/api/locations', async (req, res) => {
   try {
-    const accessToken = req.headers.authorization ? req.headers.authorization.split(' ')[1] : null;
-    if (!accessToken) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, error: 'No access token provided' });
     }
+    const accessToken = authHeader.split(' ')[1];
 
     const accountRes = await fetch('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
     const accountData = await accountRes.json();
+    
     if (!accountData.accounts || accountData.accounts.length === 0) {
-      return res.status(404).json({ success: false, error: 'No accounts found' });
+      return res.status(404).json({ success: false, error: 'No Google Business accounts found for this token.' });
     }
     const accountName = accountData.accounts[0].name;
 
@@ -49,23 +50,16 @@ app.get('/api/locations', async (req, res) => {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
     const locationData = await locationRes.json();
+    
     if (!locationData.locations || locationData.locations.length === 0) {
-      return res.status(404).json({ success: false, error: 'No locations found' });
+      return res.status(404).json({ success: false, error: 'No locations found under this account.' });
     }
 
-    // Find the verified location automatically
     let verifiedLocation = locationData.locations.find(loc => 
-      loc.verificationState === 'VERIFIED' || !loc.verificationState // fallback if state isn't explicitly returned
-    );
+      loc.verificationState === 'VERIFIED' || !loc.verificationState
+    ) || locationData.locations[0];
 
-    // If none explicitly marked verified, default to the first one
-    if (!verifiedLocation) {
-      verifiedLocation = locationData.locations[0];
-    }
-
-    const locationName = verifiedLocation.name; // e.g., "accounts/12345/locations/67890"
-
-    res.json({ success: true, locationName });
+    res.json({ success: true, locationName: verifiedLocation.name });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -74,11 +68,15 @@ app.get('/api/locations', async (req, res) => {
 // 2. Fetch Live Reviews Directly from Google
 app.get('/api/reviews', async (req, res) => {
   try {
-    const accessToken = req.headers.authorization ? req.headers.authorization.split(' ')[1] : null;
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'No access token provided' });
+    }
+    const accessToken = authHeader.split(' ')[1];
     const locationName = req.query.locationName;
 
-    if (!accessToken || !locationName) {
-      return res.status(400).json({ success: false, error: 'Missing access token or locationName' });
+    if (!locationName) {
+      return res.status(400).json({ success: false, error: 'Missing locationName parameter' });
     }
 
     const response = await fetch(`https://mybusiness.googleapis.com/v4/${locationName}/reviews`, {
@@ -95,11 +93,15 @@ app.get('/api/reviews', async (req, res) => {
 // 3. Post Manual or Edited Reply to Google
 app.post('/api/reviews/reply', async (req, res) => {
   try {
-    const accessToken = req.headers.authorization ? req.headers.authorization.split(' ')[1] : null;
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'No access token provided' });
+    }
+    const accessToken = authHeader.split(' ')[1];
     const { reviewName, replyText } = req.body; 
 
-    if (!accessToken || !reviewName) {
-      return res.status(400).json({ success: false, error: 'Missing access token or reviewName' });
+    if (!reviewName) {
+      return res.status(400).json({ success: false, error: 'Missing reviewName' });
     }
 
     const response = await fetch(`https://mybusiness.googleapis.com/v4/${reviewName}/reply`, {
@@ -118,9 +120,8 @@ app.post('/api/reviews/reply', async (req, res) => {
   }
 });
 
-
+// Port Listener
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
