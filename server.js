@@ -51,6 +51,7 @@ app.get('/api/locations', async (req, res) => {
 
 
 // 2. Fetch Live Reviews Directly from Google
+// 2. Fetch Live Reviews Directly from Google
 app.get('/api/reviews', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -87,12 +88,12 @@ app.get('/api/reviews', async (req, res) => {
       }
     }
 
-    // If still empty, return graceful feedback
+    // If still empty, return graceful feedback using proper res.json syntax
     if (!reviewsData) {
-      return.json({ 
+      return res.json({ 
         success: true, 
         reviews: [], 
-        note: "Connected successfully, but Google returned 0 reviews for this location path. Check if your manager role has review access permissions." 
+        note: "Connected successfully, but Google returned 0 reviews for this location path." 
       });
     }
 
