@@ -28,44 +28,27 @@ if (MONGO_URI) {
 }
 
 // 1. Fetch Location ID Route (Corrected Google API Domains 
+// Hardcoded Bypass Route for Location Fetching
 app.get('/api/locations', async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, error: 'No access token provided' });
-    }
-    const accessToken = authHeader.split(' ')[1];
+    // Replace this string with your actual Google Business Profile location name 
+    // Example: "locations/1234567890123456789"
+    const hardcodedLocationName = "locations/12286613319901387894"; 
 
-    // Direct wildcard query across all authorized accounts/locations
-    const locationRes = await fetch('https://mybusinessbusinessinformation.googleapis.com/v1/accounts/-/locations?readMask=name,title,storeCode,verificationState', {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
-    
-    const locationText = await locationRes.text();
-    console.log("WILDCARD LOCATIONS RESPONSE:", locationText);
-
-    if (locationText.startsWith('<!DOCTYPE') || locationText.startsWith('<html')) {
-      return res.status(500).json({ success: false, error: 'Google Locations API error or invalid token scope.' });
-    }
-
-    const locationData = JSON.parse(locationText);
-    if (!locationData.locations || locationData.locations.length === 0) {
-      return res.status(404).json({ 
+    if (!hardcodedLocationName || hardcodedLocationName.includes("YOUR_ACTUAL")) {
+      return res.status(400).json({ 
         success: false, 
-        error: 'No locations found. Verify that your Google account has active manager/owner rights on a live business profile.' 
+        error: 'Please replace YOUR_ACTUAL_LOCATION_ID_HERE in server.js with your real location ID.' 
       });
     }
 
-    let verifiedLocation = locationData.locations.find(loc => 
-      loc.verificationState === 'VERIFIED' || !loc.verificationState
-    ) || locationData.locations[0];
-
-    res.json({ success: true, locationName: verifiedLocation.name });
+    res.json({ success: true, locationName: hardcodedLocationName });
   } catch (error) {
     console.error('Server error in /api/locations:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
 
 // 2. Fetch Live Reviews Directly from Google
 app.get('/api/reviews', async (req, res) => {
