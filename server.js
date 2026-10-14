@@ -27,8 +27,7 @@ if (MONGO_URI) {
   console.log('No MongoDB URI provided, running without database connection.');
 }
 
-// 1. Fetch Location ID Route (Corrected Google API Domain)
-app.get('/api/locations', async (req, res) => {
+// 1. Fetch Location ID Route (Corrected Google API Domains 
 app.get('/api/locations', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
