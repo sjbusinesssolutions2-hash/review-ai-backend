@@ -1,5 +1,4 @@
 const express = require('express');
-const fetch = require('node-fetch'); // Make sure node-fetch is installed
 const app = express();
 
 app.use(express.json());
