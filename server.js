@@ -29,6 +29,7 @@ if (MONGO_URI) {
 
 // 1. Fetch Location ID Route (Corrected Google API Domain)
 app.get('/api/locations', async (req, res) => {
+app.get('/api/locations', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -50,10 +51,12 @@ app.get('/api/locations', async (req, res) => {
     for (const account of accountData.accounts) {
       const accountName = account.name; // e.g., "accounts/109345..."
       
-      const locationRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${accountName}/locations`, {
+      // Added mandatory readMask for Google Business Information API
+      const locationRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${accountName}/locations?readMask=name,title,storeCode,verificationState`, {
         headers: { 'Authorization': `Bearer ${accessToken}` }
       });
       const locationData = await locationRes.json();
+      console.log(`LOCATIONS FOR ${accountName}:`, JSON.stringify(locationData));
 
       if (locationData.locations && locationData.locations.length > 0) {
         let verifiedLocation = locationData.locations.find(loc => 
@@ -68,7 +71,7 @@ app.get('/api/locations', async (req, res) => {
     if (!foundLocationName) {
       return res.status(404).json({ 
         success: false, 
-        error: 'No locations found. Ensure the manager email is actively mapped to the verified profile in Google Business Profile.' 
+        error: 'No locations found with readMask. Check Render logs for account node outputs.' 
       });
     }
 
@@ -78,7 +81,6 @@ app.get('/api/locations', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-
 
 // 2. Fetch Live Reviews Directly from Google
 app.get('/api/reviews', async (req, res) => {
