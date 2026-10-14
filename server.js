@@ -75,7 +75,7 @@ app.post('/api/auth/google', async (req, res) => {
   }
 });
 
-// 2. Fetch ALL Associated Google Business Accounts & Locations
+// 2. Fetch ALL Associated Google Business Accounts & Locations with Full Paths
 app.get('/api/locations/all', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -84,7 +84,6 @@ app.get('/api/locations/all', async (req, res) => {
     }
     const accessToken = authHeader.split(' ')[1];
 
-    // Step A: Fetch User's Google Business Accounts
     const accountsRes = await fetch('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
@@ -93,24 +92,35 @@ app.get('/api/locations/all', async (req, res) => {
 
     let allLocations = [];
 
-    // Step B: Iterate through accounts to fetch locations
     for (const account of accounts) {
       const locRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${account.name}/locations?readMask=name,title`, {
         headers: { 'Authorization': `Bearer ${accessToken}` }
       });
       const locData = await locRes.json();
       if (locData.locations) {
-        allLocations.push(...locData.locations);
+        locData.locations.forEach(loc => {
+          allLocations.push({
+            name: `${account.name}/${loc.name}`, // Preserves full account/location path for API v4
+            title: loc.title || 'Google Business Location'
+          });
+        });
       }
     }
 
-    // Fallback search across root if account iteration is empty
+    // Fallback if accounts iteration returns empty
     if (allLocations.length === 0) {
       const fallbackRes = await fetch('https://mybusinessbusinessinformation.googleapis.com/v1/accounts/-/locations?readMask=name,title', {
         headers: { 'Authorization': `Bearer ${accessToken}` }
       });
       const fallbackData = await fallbackRes.json();
-      allLocations = fallbackData.locations || [];
+      if (fallbackData.locations) {
+        fallbackData.locations.forEach(loc => {
+          allLocations.push({
+            name: `accounts/-/${loc.name}`,
+            title: loc.title || 'Google Business Location'
+          });
+        });
+      }
     }
 
     res.json({ success: true, locations: allLocations });
@@ -120,7 +130,31 @@ app.get('/api/locations/all', async (req, res) => {
   }
 });
 
-// 3. Fetch Real Reviews for Selected Location
+// Helper Function: Fetch Reviews across multiple path formats for maximum compatibility
+async function getReviewsForLocation(locationPath, accessToken) {
+  const pathsToTry = [
+    locationPath,
+    locationPath.includes('accounts/') ? locationPath : `accounts/-/${locationPath}`
+  ];
+
+  for (const path of pathsToTry) {
+    try {
+      console.log(`Fetching reviews from path: https://mybusiness.googleapis.com/v4/${path}/reviews`);
+      const response = await fetch(`https://mybusiness.googleapis.com/v4/${path}/reviews`, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      const data = await response.json();
+      if (data.reviews && data.reviews.length > 0) {
+        return data.reviews;
+      }
+    } catch (err) {
+      console.error(`Error querying path ${path}:`, err.message);
+    }
+  }
+  return [];
+}
+
+// 3. Fetch ALL Real Reviews for Selected Location (Both Replied & Pending)
 app.post('/api/reviews/fetch', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -134,25 +168,15 @@ app.post('/api/reviews/fetch', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Location name is required' });
     }
 
-    // Standardize v4 path format
-    let parentPath = locationName;
-    if (!parentPath.startsWith('accounts/')) {
-      parentPath = `accounts/-/locations/${parentPath.replace('locations/', '')}`;
-    }
-
-    const response = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
-    const data = await response.json();
-
-    res.json({ success: true, reviews: data.reviews || [] });
+    const reviews = await getReviewsForLocation(locationName, accessToken);
+    res.json({ success: true, reviews });
   } catch (error) {
     console.error('Fetch reviews error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Resilient Gemini Generator
+// Robust Gemini AI Generator
 async function generateGeminiReply(prompt, apiKey) {
   const models = ['gemini-3.8-flash', 'gemini-3.5-flash-lite'];
 
@@ -166,25 +190,24 @@ async function generateGeminiReply(prompt, apiKey) {
         });
 
         const aiData = await aiRes.json();
-
         if (aiData.candidates && aiData.candidates[0]?.content?.parts?.[0]?.text) {
           return aiData.candidates[0].content.parts[0].text.trim();
         }
 
         if (aiData.error && (aiData.error.code === 503 || aiData.error.code === 429)) {
-          await new Promise(resolve => setTimeout(resolve, 5000));
+          await new Promise(resolve => setTimeout(resolve, 4000));
         } else {
           break;
         }
       } catch (err) {
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
   }
   return null;
 }
 
-// 4. Live Review AI Autopilot Route
+// 4. Live Review AI Autopilot Route (Processes Unreplied Reviews & Returns All Statuses)
 app.post('/api/reviews/autopilot', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -194,20 +217,10 @@ app.post('/api/reviews/autopilot', async (req, res) => {
     const accessToken = authHeader.split(' ')[1];
     const { locationName } = req.body;
 
-    let parentPath = locationName || 'accounts/-/locations/default';
-    if (!parentPath.startsWith('accounts/')) {
-      parentPath = `accounts/-/locations/${parentPath.replace('locations/', '')}`;
-    }
-
-    // Fetch REAL reviews from Google API
-    const response = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
-    const data = await response.json();
-    const reviews = data.reviews || [];
+    const reviews = await getReviewsForLocation(locationName, accessToken);
 
     if (reviews.length === 0) {
-      return res.json({ success: true, message: 'No unreplied reviews found for this location.', activityLog: [] });
+      return res.json({ success: true, message: 'No live reviews found for this location.', activityLog: [] });
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -217,12 +230,23 @@ app.post('/api/reviews/autopilot', async (req, res) => {
     const activityLog = [];
 
     for (const review of reviews) {
-      if (review.reviewReply) continue; // Skip if already replied
-
       const reviewText = review.comment || 'Great service!';
       const starRating = review.starRating || 'FIVE';
       const reviewerName = review.reviewer?.displayName || 'Valued Customer';
 
+      // If already has a reply, add to log as already completed
+      if (review.reviewReply) {
+        activityLog.push({
+          reviewer: reviewerName,
+          rating: starRating,
+          comment: reviewText,
+          reply: review.reviewReply.comment,
+          status: 'Already Replied'
+        });
+        continue;
+      }
+
+      // Generate personalized AI reply for unreplied review
       const prompt = `Write a professional, warm, and highly personalized business reply to this customer review.
       Customer Name: ${reviewerName}
       Star Rating: ${starRating}
@@ -251,13 +275,14 @@ app.post('/api/reviews/autopilot', async (req, res) => {
         reviewer: reviewerName,
         rating: starRating,
         comment: reviewText,
-        reply: replyText
+        reply: replyText,
+        status: 'Newly Replied'
       });
     }
 
     res.json({ 
       success: true, 
-      message: `Autopilot ran successfully! Replied to ${processedCount} real review(s).`,
+      message: `Autopilot complete! Replied to ${processedCount} pending review(s).`,
       activityLog 
     });
   } catch (error) {
