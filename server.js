@@ -119,36 +119,33 @@ app.get('/api/locations', async (req, res) => {
   }
 });
 
-// Helper function with exponential backoff for Gemini generation
+// Robust Gemini AI Generator using v1beta endpoint and modern models
 async function generateGeminiReply(prompt, apiKey) {
-  const models = ['gemini-1.5-flash', 'gemini-1.5-pro'];
-  
-  for (const model of models) {
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${apiKey}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-        });
+  const models = ['gemini-3.8-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
 
-        const aiData = await aiRes.json();
-        if (aiData.candidates && aiData.candidates[0]?.content?.parts?.[0]?.text) {
-          return aiData.candidates[0].content.parts[0].text.trim();
-        }
-        
-        // If high demand error, wait before retrying
-        console.log(`Model ${model} attempt ${attempt} busy, waiting...`);
-        await new Promise(resolve => setTimeout(resolve, attempt * 2000));
-      } catch (err) {
-        console.error(`Error with model ${model}:`, err.message);
+  for (const model of models) {
+    try {
+      console.log(`Attempting Gemini generation with model: ${model}`);
+      const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      });
+
+      const aiData = await aiRes.json();
+      console.log(`Response from ${model}:`, JSON.stringify(aiData));
+
+      if (aiData.candidates && aiData.candidates[0]?.content?.parts?.[0]?.text) {
+        return aiData.candidates[0].content.parts[0].text.trim();
       }
+    } catch (err) {
+      console.error(`Error calling model ${model}:`, err.message);
     }
   }
   return null;
 }
 
-// 3. Fully Automated AI Review Autopilot Route (Background Queue Friendly)
+// 3. Fully Automated AI Review Autopilot Route
 app.post('/api/reviews/autopilot', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -213,16 +210,15 @@ app.post('/api/reviews/autopilot', async (req, res) => {
       Review Text: "${reviewText}"
 
       Rules:
-      1. Directly reference specific details mentioned in the customer's comment.
+      1. Directly reference specific details mentioned in the customer's comment (e.g., mention communication, prompt service, or the smooth process).
       2. Do NOT use generic sentences like "Thank you for your feedback!".
       3. Keep response to 2-3 sentences.`;
 
-      // Call our robust retry-enabled generator
       let replyText = await generateGeminiReply(prompt, apiKey);
 
-      // Intelligent fallback only if Gemini is completely exhausted after retries
+      // If AI completely fails, output explicit indicator instead of masking it as static text
       if (!replyText) {
-        replyText = `Hi ${reviewerName}, thank you for taking the time to share your ${starRating.toLowerCase()} star experience with us! We're thrilled to hear your thoughts on our service and look forward to serving you again soon.`;
+        replyText = `ERROR: Gemini API key invalid or quota exceeded. Check Render logs.`;
       }
 
       // Automatically Post Reply to Google API (or simulate if mock review)
@@ -248,7 +244,7 @@ app.post('/api/reviews/autopilot', async (req, res) => {
 
     res.json({ 
       success: true, 
-      message: `Background queue processed! Automatically replied to ${processedCount} review(s).`,
+      message: `Autopilot ran successfully! Automatically replied to ${processedCount} review(s).`,
       activityLog 
     });
   } catch (error) {
