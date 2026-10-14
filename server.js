@@ -119,7 +119,36 @@ app.get('/api/locations', async (req, res) => {
   }
 });
 
-// 3. Fully Automated AI Review Autopilot Route
+// Helper function with exponential backoff for Gemini generation
+async function generateGeminiReply(prompt, apiKey) {
+  const models = ['gemini-1.5-flash', 'gemini-1.5-pro'];
+  
+  for (const model of models) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+        });
+
+        const aiData = await aiRes.json();
+        if (aiData.candidates && aiData.candidates[0]?.content?.parts?.[0]?.text) {
+          return aiData.candidates[0].content.parts[0].text.trim();
+        }
+        
+        // If high demand error, wait before retrying
+        console.log(`Model ${model} attempt ${attempt} busy, waiting...`);
+        await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+      } catch (err) {
+        console.error(`Error with model ${model}:`, err.message);
+      }
+    }
+  }
+  return null;
+}
+
+// 3. Fully Automated AI Review Autopilot Route (Background Queue Friendly)
 app.post('/api/reviews/autopilot', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -188,31 +217,12 @@ app.post('/api/reviews/autopilot', async (req, res) => {
       2. Do NOT use generic sentences like "Thank you for your feedback!".
       3. Keep response to 2-3 sentences.`;
 
-      // Resilient Multi-Model Fallback Sequence for High-Demand Protection
-      const modelsToTry = ['gemini-1.5-flash', 'gemini-1.5-pro'];
-      let replyText = null;
+      // Call our robust retry-enabled generator
+      let replyText = await generateGeminiReply(prompt, apiKey);
 
-      for (const modelName of modelsToTry) {
-        try {
-          const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-          });
-
-          const aiData = await aiRes.json();
-          if (!aiData.error && aiData.candidates?.[0]?.content?.parts?.[0]?.text) {
-            replyText = aiData.candidates[0].content.parts[0].text.trim();
-            break; // Success! Exit model loop
-          }
-        } catch (err) {
-          console.log(`Model ${modelName} encountered an issue, trying next...`);
-        }
-      }
-
-      // Ultimate fallback if models experience heavy spikes
+      // Intelligent fallback only if Gemini is completely exhausted after retries
       if (!replyText) {
-        replyText = `Thank you so much for your wonderful review, ${reviewerName}! We truly appreciate your ${starRating.toLowerCase()} rating and are delighted we could provide a great experience.`;
+        replyText = `Hi ${reviewerName}, thank you for taking the time to share your ${starRating.toLowerCase()} star experience with us! We're thrilled to hear your thoughts on our service and look forward to serving you again soon.`;
       }
 
       // Automatically Post Reply to Google API (or simulate if mock review)
@@ -238,7 +248,7 @@ app.post('/api/reviews/autopilot', async (req, res) => {
 
     res.json({ 
       success: true, 
-      message: `Autopilot ran successfully! Automatically replied to ${processedCount} review(s).`,
+      message: `Background queue processed! Automatically replied to ${processedCount} review(s).`,
       activityLog 
     });
   } catch (error) {
