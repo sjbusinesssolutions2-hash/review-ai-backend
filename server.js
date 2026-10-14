@@ -36,45 +36,31 @@ app.get('/api/locations', async (req, res) => {
     }
     const accessToken = authHeader.split(' ')[1];
 
-    const accountRes = await fetch('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', {
+    // Direct wildcard query across all authorized accounts/locations
+    const locationRes = await fetch('https://mybusinessbusinessinformation.googleapis.com/v1/accounts/-/locations?readMask=name,title,storeCode,verificationState', {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
-    const accountData = await accountRes.json();
+    
+    const locationText = await locationRes.text();
+    console.log("WILDCARD LOCATIONS RESPONSE:", locationText);
 
-    if (!accountData.accounts || accountData.accounts.length === 0) {
-      return res.status(404).json({ success: false, error: 'No Google Business accounts found for this user.' });
+    if (locationText.startsWith('<!DOCTYPE') || locationText.startsWith('<html')) {
+      return res.status(500).json({ success: false, error: 'Google Locations API error or invalid token scope.' });
     }
 
-    let foundLocationName = null;
-
-    for (const account of accountData.accounts) {
-      const accountName = account.name; // e.g., "accounts/109345..."
-      
-      // Added mandatory readMask for Google Business Information API
-      const locationRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${accountName}/locations?readMask=name,title,storeCode,verificationState`, {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
-      });
-      const locationData = await locationRes.json();
-      console.log(`LOCATIONS FOR ${accountName}:`, JSON.stringify(locationData));
-
-      if (locationData.locations && locationData.locations.length > 0) {
-        let verifiedLocation = locationData.locations.find(loc => 
-          loc.verificationState === 'VERIFIED' || !loc.verificationState
-        ) || locationData.locations[0];
-        
-        foundLocationName = verifiedLocation.name;
-        break;
-      }
-    }
-
-    if (!foundLocationName) {
+    const locationData = JSON.parse(locationText);
+    if (!locationData.locations || locationData.locations.length === 0) {
       return res.status(404).json({ 
         success: false, 
-        error: 'No locations found with readMask. Check Render logs for account node outputs.' 
+        error: 'No locations found. Verify that your Google account has active manager/owner rights on a live business profile.' 
       });
     }
 
-    res.json({ success: true, locationName: foundLocationName });
+    let verifiedLocation = locationData.locations.find(loc => 
+      loc.verificationState === 'VERIFIED' || !loc.verificationState
+    ) || locationData.locations[0];
+
+    res.json({ success: true, locationName: verifiedLocation.name });
   } catch (error) {
     console.error('Server error in /api/locations:', error);
     res.status(500).json({ success: false, error: error.message });
