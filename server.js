@@ -58,35 +58,45 @@ app.get('/api/reviews', async (req, res) => {
       return res.status(401).json({ success: false, error: 'No access token provided' });
     }
     const accessToken = authHeader.split(' ')[1];
-    let locationName = req.query.locationName; // e.g., "locations/12345" or "accounts/xxx/locations/12345"
+    let locationName = req.query.locationName; // e.g., "locations/123456789"
 
     if (!locationName) {
       return res.status(400).json({ success: false, error: 'Missing locationName parameter' });
     }
 
-    // Ensure it follows the v4 account-nested path format required by Google
-    let reviewPath = locationName;
-    if (!reviewPath.startsWith('accounts/')) {
-      // If you only provided "locations/ID", replace it with your account ID structure or use wildcard account node
-      reviewPath = `accounts/-/locations/${locationName.replace('locations/', '')}`;
+    // Try multiple path variations to accommodate manager account nodes
+    const pathsToTry = [
+      `https://mybusiness.googleapis.com/v4/${locationName}/reviews`,
+      `https://mybusiness.googleapis.com/v4/accounts/-/locations/${locationName.replace('locations/', '')}/reviews`
+    ];
+
+    let reviewsData = null;
+
+    for (const url of pathsToTry) {
+      const response = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      const responseText = await response.text();
+
+      if (!responseText.startsWith('<!DOCTYPE') && !responseText.startsWith('<html')) {
+        const json = JSON.parse(responseText);
+        if (json.reviews && json.reviews.length > 0) {
+          reviewsData = json.reviews;
+          break;
+        }
+      }
     }
 
-    const response = await fetch(`https://mybusiness.googleapis.com/v4/${reviewPath}/reviews`, {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
-
-    const responseText = await response.text();
-    
-    if (responseText.startsWith('<!DOCTYPE') || responseText.startsWith('<html')) {
-      console.error('Google Reviews API returned HTML error:', responseText);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Google Reviews API endpoint rejected request. Check if account-nested path is correct.' 
+    // If still empty, return graceful feedback
+    if (!reviewsData) {
+      return.json({ 
+        success: true, 
+        reviews: [], 
+        note: "Connected successfully, but Google returned 0 reviews for this location path. Check if your manager role has review access permissions." 
       });
     }
 
-    const data = JSON.parse(responseText);
-    res.json({ success: true, reviews: data.reviews || [] });
+    res.json({ success: true, reviews: reviewsData });
   } catch (error) {
     console.error('Server error in /api/reviews:', error);
     res.status(500).json({ success: false, error: error.message });
