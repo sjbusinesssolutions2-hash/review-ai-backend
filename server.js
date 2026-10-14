@@ -9,7 +9,7 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Global Error Catching for Debugging
+// Global Error Catching for Stability
 process.on('uncaughtException', (err) => {
   console.error('UNCAUGHT EXCEPTION:', err);
 });
@@ -17,41 +17,126 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('UNHANDLED REJECTION:', reason);
 });
 
-// Connect to MongoDB Database
+// Connect to MongoDB Atlas
 const MONGO_URI = process.env.MONGO_URI || '';
 if (MONGO_URI) {
   mongoose.connect(MONGO_URI)
-    .then(() => console.log('Connected to MongoDB database'))
+    .then(() => console.log('Connected to MongoDB Atlas database'))
     .catch(err => console.error('MongoDB connection error:', err));
 } else {
-  console.log('No MongoDB URI provided, running without database connection.');
+  console.log('No MONGO_URI provided in environment variables.');
 }
 
-// 1. Fetch Location ID Route (Corrected Google API Domains 
-// Hardcoded Bypass Route for Location Fetching
-app.get('/api/locations', async (req, res) => {
-  try {
-    // Replace this string with your actual Google Business Profile location name 
-    // Example: "locations/1234567890123456789"
-    const hardcodedLocationName = "locations/12286613319901387894"; 
+// User Token Schema for Persistent SaaS Sessions
+const userSchema = new mongoose.Schema({
+  googleId: { type: String, unique: true, required: true },
+  email: String,
+  accessToken: String,
+  refreshToken: String,
+  tokenExpiry: Date,
+  createdAt: { type: Date, default: Date.now }
+});
+const User = mongoose.model('User', userSchema);
 
-    if (!hardcodedLocationName || hardcodedLocationName.includes("YOUR_ACTUAL")) {
-      return res.status(400).json({ 
+// 1. Google OAuth Token Exchange Endpoint
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    const { code, redirectUri } = req.body;
+
+    if (!code) {
+      return res.status(400).json({ success: false, error: 'Authorization code missing' });
+    }
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+      return res.status(500).json({ 
         success: false, 
-        error: 'Please replace YOUR_ACTUAL_LOCATION_ID_HERE in server.js with your real location ID.' 
+        error: 'GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET is missing on Render Environment' 
       });
     }
 
-    res.json({ success: true, locationName: hardcodedLocationName });
+    // Exchange auth code for access & refresh tokens
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri || 'https://sjbusinesssolutions2-hash.github.io/review-ai-app/',
+        grant_type: 'authorization_code'
+      })
+    });
+
+    const tokenData = await tokenRes.json();
+    if (tokenData.error) {
+      console.error('OAuth exchange error from Google:', tokenData);
+      return res.status(400).json({ success: false, error: tokenData.error_description || tokenData.error });
+    }
+
+    // Fetch user profile info
+    const profileRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { 'Authorization': `Bearer ${tokenData.access_token}` }
+    });
+    const profile = await profileRes.json();
+
+    // Store or update user session in MongoDB Atlas
+    await User.findOneAndUpdate(
+      { googleId: profile.id },
+      {
+        email: profile.email,
+        accessToken: tokenData.access_token,
+        refreshToken: tokenData.refresh_token || undefined,
+        tokenExpiry: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000)
+      },
+      { upsert: true, new: true }
+    );
+
+    res.json({ 
+      success: true, 
+      accessToken: tokenData.access_token, 
+      email: profile.email 
+    });
+  } catch (error) {
+    console.error('Server error in /api/auth/google:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 2. Fetch Google Business Location Name
+app.get('/api/locations', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'No access token provided' });
+    }
+    const accessToken = authHeader.split(' ')[1];
+
+    const locationRes = await fetch('https://mybusinessbusinessinformation.googleapis.com/v1/accounts/-/locations?readMask=name,title', {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+
+    const locationText = await locationRes.text();
+    if (locationText.startsWith('<!DOCTYPE') || locationText.startsWith('<html')) {
+      return res.status(500).json({ success: false, error: 'Google Locations API rejected request.' });
+    }
+
+    const locationData = JSON.parse(locationText);
+    if (!locationData.locations || locationData.locations.length === 0) {
+      // Fallback location ID if wildcard query returns zero items
+      return res.json({ success: true, locationName: 'locations/default_location' });
+    }
+
+    res.json({ success: true, locationName: locationData.locations[0].name });
   } catch (error) {
     console.error('Server error in /api/locations:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-
-// 2. Fetch Live Reviews Directly from Google
-// 2. Fetch Live Reviews or Provide Workspace Data
+// 3. Fetch Reviews from Google
 app.get('/api/reviews', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -59,40 +144,42 @@ app.get('/api/reviews', async (req, res) => {
       return res.status(401).json({ success: false, error: 'No access token provided' });
     }
     const accessToken = authHeader.split(' ')[1];
-    let locationName = req.query.locationName || "locations/sample_location";
+    let locationName = req.query.locationName || 'locations/default_location';
 
-    // Attempt standard v4 fetch if owner token is present, otherwise handle manager fallback cleanly
+    let fullParentPath = locationName;
+    if (!fullParentPath.startsWith('accounts/')) {
+      fullParentPath = `accounts/-/locations/${locationName.replace('locations/', '')}`;
+    }
+
     let reviewsList = [];
     try {
-      let fullParentPath = locationName;
-      if (!fullParentPath.startsWith('accounts/')) {
-        fullParentPath = `accounts/-/locations/${locationName.replace('locations/', '')}`;
-      }
       const response = await fetch(`https://mybusiness.googleapis.com/v4/${fullParentPath}/reviews`, {
         headers: { 'Authorization': `Bearer ${accessToken}` }
       });
       const data = await response.json();
-      if (data.reviews) reviewsList = data.reviews;
+      if (data.reviews) {
+        reviewsList = data.reviews;
+      }
     } catch (e) {
-      console.log("Direct v4 review restriction encountered for manager account.");
+      console.log("Direct Google review API fetch failed, falling back to sample payload.");
     }
 
-    // If empty (due to manager role restrictions), provide active workspace review cards so you can test Gemini AI & DB
+    // Fallback populated review sample if direct fetch yields empty set
     if (reviewsList.length === 0) {
       reviewsList = [
         {
-          name: `${locationName}/reviews/review_live_1`,
+          name: `${locationName}/reviews/rev_101`,
           reviewer: { displayName: 'David Miller' },
           starRating: 'FIVE',
           comment: 'Fantastic experience! The automated communication and prompt service exceeded all expectations.',
           createTime: new Date().toISOString()
         },
         {
-          name: `${locationName}/reviews/review_live_2`,
+          name: `${locationName}/reviews/rev_102`,
           reviewer: { displayName: 'Jessica Taylor' },
           starRating: 'FOUR',
           comment: 'Really smooth process. Quick replies and very professional team.',
-          createTime: new Date(Date.now() - 43200000).toISOString()
+          createTime: new Date(Date.now() - 86400000).toISOString()
         }
       ];
     }
@@ -104,7 +191,48 @@ app.get('/api/reviews', async (req, res) => {
   }
 });
 
-// 3. Post Manual or Edited Reply to Google
+// 4. Dynamic Gemini AI Reply Generator
+app.post('/api/ai/generate', async (req, res) => {
+  try {
+    const { reviewText, starRating } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({ success: false, error: 'GEMINI_API_KEY environment variable missing on Render.' });
+    }
+
+    const prompt = `You are representing a professional local business. Write a polite, appreciative, and unique customer reply for this review:
+    Rating: ${starRating || '5'} stars
+    Customer Review: "${reviewText || 'Great service!'}"
+    
+    Instructions:
+    - Address the specific points mentioned in the customer's comment.
+    - Do NOT give generic repetitive statements.
+    - Keep it friendly, professional, and concise (2-3 sentences max).`;
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }]
+      })
+    });
+
+    const data = await response.json();
+    const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!aiReply) {
+      return res.status(500).json({ success: false, error: 'Gemini did not return a response.' });
+    }
+
+    res.json({ success: true, reply: aiReply.trim() });
+  } catch (error) {
+    console.error('Gemini AI endpoint error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 5. Submit Reply Endpoint
 app.post('/api/reviews/reply', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -112,10 +240,10 @@ app.post('/api/reviews/reply', async (req, res) => {
       return res.status(401).json({ success: false, error: 'No access token provided' });
     }
     const accessToken = authHeader.split(' ')[1];
-    const { reviewName, replyText } = req.body; 
+    const { reviewName, replyText } = req.body;
 
-    if (!reviewName) {
-      return res.status(400).json({ success: false, error: 'Missing reviewName' });
+    if (!reviewName || !replyText) {
+      return res.status(400).json({ success: false, error: 'Missing reviewName or replyText' });
     }
 
     const response = await fetch(`https://mybusiness.googleapis.com/v4/${reviewName}/reply`, {
@@ -130,49 +258,13 @@ app.post('/api/reviews/reply', async (req, res) => {
     const result = await response.json();
     res.json({ success: true, result });
   } catch (error) {
+    console.error('Server error in /api/reviews/reply:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Port Listener
+// Start Server
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-});
-
-// 4. Gemini AI Reply Generation Route
-app.post('/api/ai/generate', async (req, res) => {
-  try {
-    const { reviewText, starRating } = req.body;
-    const apiKey = process.env.GEMINI_API_KEY;
-
-    if (!apiKey) {
-      return res.status(500).json({ success: false, error: 'GEMINI_API_KEY not configured.' });
-    }
-
-    const prompt = `Write a polite, professional, and personalized business reply to this Google review. 
-    Rating: ${starRating} stars.
-    Review: "${reviewText}"
-    Tailor the response specifically to what the customer said. Keep it concise and friendly.`;
-
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }]
-      })
-    });
-
-    const data = await response.json();
-    const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!aiReply) {
-      return res.json({ success: true, reply: `Thank you for the ${starRating.toLowerCase()} rating! We appreciate your feedback.` });
-    }
-
-    res.json({ success: true, reply: aiReply.trim() });
-  } catch (error) {
-    console.error('Gemini AI error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
 });
