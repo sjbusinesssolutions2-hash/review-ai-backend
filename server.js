@@ -36,7 +36,7 @@ app.get('/api/locations', async (req, res) => {
     }
     const accessToken = authHeader.split(' ')[1];
 
-    const accountRes = await fetch('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', {
+    const locationRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${accountName}/locations`, {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
 
