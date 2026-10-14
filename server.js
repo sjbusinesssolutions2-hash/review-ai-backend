@@ -5,29 +5,19 @@ require('dotenv').config();
 
 const app = express();
 
-// Middleware
 app.use(express.json());
 app.use(cors());
 
-// Global Error Catching for Stability
-process.on('uncaughtException', (err) => {
-  console.error('UNCAUGHT EXCEPTION:', err);
-});
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('UNHANDLED REJECTION:', reason);
-});
+process.on('uncaughtException', (err) => console.error('UNCAUGHT EXCEPTION:', err));
+process.on('unhandledRejection', (reason) => console.error('UNHANDLED REJECTION:', reason));
 
-// Connect to MongoDB Atlas
 const MONGO_URI = process.env.MONGO_URI || '';
 if (MONGO_URI) {
   mongoose.connect(MONGO_URI)
     .then(() => console.log('Connected to MongoDB Atlas database'))
     .catch(err => console.error('MongoDB connection error:', err));
-} else {
-  console.log('No MONGO_URI provided in environment variables.');
 }
 
-// User Token Schema for Persistent SaaS Sessions
 const userSchema = new mongoose.Schema({
   googleId: { type: String, unique: true, required: true },
   email: String,
@@ -42,9 +32,7 @@ const User = mongoose.model('User', userSchema);
 app.post('/api/auth/google', async (req, res) => {
   try {
     const { code, redirectUri } = req.body;
-    if (!code) {
-      return res.status(400).json({ success: false, error: 'Authorization code missing' });
-    }
+    if (!code) return res.status(400).json({ success: false, error: 'Authorization code missing' });
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -62,9 +50,7 @@ app.post('/api/auth/google', async (req, res) => {
     });
 
     const tokenData = await tokenRes.json();
-    if (tokenData.error) {
-      return res.status(400).json({ success: false, error: tokenData.error_description || tokenData.error });
-    }
+    if (tokenData.error) return res.status(400).json({ success: false, error: tokenData.error_description || tokenData.error });
 
     const profileRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
       headers: { 'Authorization': `Bearer ${tokenData.access_token}` }
@@ -89,8 +75,8 @@ app.post('/api/auth/google', async (req, res) => {
   }
 });
 
-// 2. Fetch Google Business Location Name
-app.get('/api/locations', async (req, res) => {
+// 2. Fetch ALL Associated Google Business Accounts & Locations
+app.get('/api/locations/all', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -98,35 +84,81 @@ app.get('/api/locations', async (req, res) => {
     }
     const accessToken = authHeader.split(' ')[1];
 
-    const locationRes = await fetch('https://mybusinessbusinessinformation.googleapis.com/v1/accounts/-/locations?readMask=name,title', {
+    // Step A: Fetch User's Google Business Accounts
+    const accountsRes = await fetch('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
+    const accountsData = await accountsRes.json();
+    const accounts = accountsData.accounts || [];
 
-    const locationText = await locationRes.text();
-    if (locationText.startsWith('<!DOCTYPE') || locationText.startsWith('<html')) {
-      return res.json({ success: true, locationName: 'locations/default_location' });
+    let allLocations = [];
+
+    // Step B: Iterate through accounts to fetch locations
+    for (const account of accounts) {
+      const locRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${account.name}/locations?readMask=name,title`, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      const locData = await locRes.json();
+      if (locData.locations) {
+        allLocations.push(...locData.locations);
+      }
     }
 
-    const locationData = JSON.parse(locationText);
-    if (!locationData.locations || locationData.locations.length === 0) {
-      return res.json({ success: true, locationName: 'locations/default_location' });
+    // Fallback search across root if account iteration is empty
+    if (allLocations.length === 0) {
+      const fallbackRes = await fetch('https://mybusinessbusinessinformation.googleapis.com/v1/accounts/-/locations?readMask=name,title', {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      const fallbackData = await fallbackRes.json();
+      allLocations = fallbackData.locations || [];
     }
 
-    res.json({ success: true, locationName: locationData.locations[0].name });
+    res.json({ success: true, locations: allLocations });
   } catch (error) {
-    console.error('Server error in /api/locations:', error);
-    res.json({ success: true, locationName: 'locations/default_location' });
+    console.error('Error fetching locations:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Resilient Gemini Generator with background retries for active 3.x models
+// 3. Fetch Real Reviews for Selected Location
+app.post('/api/reviews/fetch', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'No access token provided' });
+    }
+    const accessToken = authHeader.split(' ')[1];
+    const { locationName } = req.body;
+
+    if (!locationName) {
+      return res.status(400).json({ success: false, error: 'Location name is required' });
+    }
+
+    // Standardize v4 path format
+    let parentPath = locationName;
+    if (!parentPath.startsWith('accounts/')) {
+      parentPath = `accounts/-/locations/${parentPath.replace('locations/', '')}`;
+    }
+
+    const response = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+    const data = await response.json();
+
+    res.json({ success: true, reviews: data.reviews || [] });
+  } catch (error) {
+    console.error('Fetch reviews error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Resilient Gemini Generator
 async function generateGeminiReply(prompt, apiKey) {
   const models = ['gemini-3.8-flash', 'gemini-3.5-flash-lite'];
 
   for (const model of models) {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        console.log(`[Attempt ${attempt}] Requesting Gemini model: ${model}...`);
         const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -136,22 +168,15 @@ async function generateGeminiReply(prompt, apiKey) {
         const aiData = await aiRes.json();
 
         if (aiData.candidates && aiData.candidates[0]?.content?.parts?.[0]?.text) {
-          console.log(`Success with model ${model}`);
           return aiData.candidates[0].content.parts[0].text.trim();
         }
 
-        if (aiData.error) {
-          console.log(`Gemini (${model}) API Error:`, aiData.error.message);
-          // If busy or high demand (503/429), pause and retry
-          if (aiData.error.code === 503 || aiData.error.code === 429) {
-            console.log(`High demand on ${model}. Retrying in 5 seconds...`);
-            await new Promise(resolve => setTimeout(resolve, 5000));
-          } else {
-            break; // Try next model if non-retryable
-          }
+        if (aiData.error && (aiData.error.code === 503 || aiData.error.code === 429)) {
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        } else {
+          break;
         }
       } catch (err) {
-        console.error(`Fetch exception for ${model}:`, err.message);
         await new Promise(resolve => setTimeout(resolve, 3000));
       }
     }
@@ -159,7 +184,7 @@ async function generateGeminiReply(prompt, apiKey) {
   return null;
 }
 
-// 3. Fully Automated AI Review Autopilot Route
+// 4. Live Review AI Autopilot Route
 app.post('/api/reviews/autopilot', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -169,50 +194,30 @@ app.post('/api/reviews/autopilot', async (req, res) => {
     const accessToken = authHeader.split(' ')[1];
     const { locationName } = req.body;
 
-    let fullParentPath = locationName || 'accounts/-/locations/default';
-    if (!fullParentPath.startsWith('accounts/')) {
-      fullParentPath = `accounts/-/locations/${fullParentPath.replace('locations/', '')}`;
+    let parentPath = locationName || 'accounts/-/locations/default';
+    if (!parentPath.startsWith('accounts/')) {
+      parentPath = `accounts/-/locations/${parentPath.replace('locations/', '')}`;
     }
 
-    let reviews = [];
-    try {
-      const response = await fetch(`https://mybusiness.googleapis.com/v4/${fullParentPath}/reviews`, {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
-      });
-      const data = await response.json();
-      reviews = data.reviews || [];
-    } catch (e) {
-      console.log("Using sample review payload for autopilot demonstration.");
-    }
+    // Fetch REAL reviews from Google API
+    const response = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+    const data = await response.json();
+    const reviews = data.reviews || [];
 
-    // Fallback sample reviews if live collection is empty
     if (reviews.length === 0) {
-      reviews = [
-        {
-          name: `${locationName || 'locations/sample'}/reviews/rev_auto_1`,
-          reviewer: { displayName: 'David Miller' },
-          starRating: 'FIVE',
-          comment: 'Fantastic experience! The automated communication and prompt service exceeded all expectations.'
-        },
-        {
-          name: `${locationName || 'locations/sample'}/reviews/rev_auto_2`,
-          reviewer: { displayName: 'Jessica Taylor' },
-          starRating: 'FOUR',
-          comment: 'Really smooth process. Quick replies and very professional team.'
-        }
-      ];
+      return res.json({ success: true, message: 'No unreplied reviews found for this location.', activityLog: [] });
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ success: false, error: 'GEMINI_API_KEY missing in environment.' });
-    }
+    if (!apiKey) return res.status(500).json({ success: false, error: 'GEMINI_API_KEY missing in environment.' });
 
     let processedCount = 0;
     const activityLog = [];
 
     for (const review of reviews) {
-      if (review.reviewReply) continue;
+      if (review.reviewReply) continue; // Skip if already replied
 
       const reviewText = review.comment || 'Great service!';
       const starRating = review.starRating || 'FIVE';
@@ -224,27 +229,22 @@ app.post('/api/reviews/autopilot', async (req, res) => {
       Review Text: "${reviewText}"
 
       Rules:
-      1. Directly reference specific details mentioned in the customer's comment (e.g., mention communication, prompt service, or the smooth process).
+      1. Directly reference specific details mentioned in the customer's comment.
       2. Do NOT use generic sentences like "Thank you for your feedback!".
       3. Keep response to 2-3 sentences.`;
 
       let replyText = await generateGeminiReply(prompt, apiKey);
+      if (!replyText) replyText = `ERROR: Gemini API busy or key invalid.`;
 
-      if (!replyText) {
-        replyText = `ERROR: Gemini API busy or key invalid. Check Render logs.`;
-      }
-
-      // Automatically Post Reply to Google API (or simulate if mock review)
-      if (!review.name.includes('rev_auto_')) {
-        await fetch(`https://mybusiness.googleapis.com/v4/${review.name}/reply`, {
-          method: 'PUT',
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ comment: replyText })
-        });
-      }
+      // Post Reply directly to Google Review API
+      await fetch(`https://mybusiness.googleapis.com/v4/${review.name}/reply`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ comment: replyText })
+      });
 
       processedCount++;
       activityLog.push({
@@ -257,7 +257,7 @@ app.post('/api/reviews/autopilot', async (req, res) => {
 
     res.json({ 
       success: true, 
-      message: `Autopilot ran successfully! Automatically replied to ${processedCount} review(s).`,
+      message: `Autopilot ran successfully! Replied to ${processedCount} real review(s).`,
       activityLog 
     });
   } catch (error) {
@@ -266,8 +266,5 @@ app.post('/api/reviews/autopilot', async (req, res) => {
   }
 });
 
-// Start Server
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
