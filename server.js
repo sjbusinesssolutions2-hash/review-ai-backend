@@ -28,6 +28,7 @@ if (MONGO_URI) {
 }
 
 // 1. Fetch Location ID Route
+// Updated Fetch Location ID Route (Filters for verified locations)
 app.get('/api/locations', async (req, res) => {
   try {
     const accessToken = req.headers.authorization ? req.headers.authorization.split(' ')[1] : null;
@@ -51,7 +52,18 @@ app.get('/api/locations', async (req, res) => {
     if (!locationData.locations || locationData.locations.length === 0) {
       return res.status(404).json({ success: false, error: 'No locations found' });
     }
-    const locationName = locationData.locations[0].name;
+
+    // Find the verified location automatically
+    let verifiedLocation = locationData.locations.find(loc => 
+      loc.verificationState === 'VERIFIED' || !loc.verificationState // fallback if state isn't explicitly returned
+    );
+
+    // If none explicitly marked verified, default to the first one
+    if (!verifiedLocation) {
+      verifiedLocation = locationData.locations[0];
+    }
+
+    const locationName = verifiedLocation.name; // e.g., "accounts/12345/locations/67890"
 
     res.json({ success: true, locationName });
   } catch (error) {
@@ -104,10 +116,4 @@ app.post('/api/reviews/reply', async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
-});
-
-// Start Server persistently on Render's assigned port
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
 });
