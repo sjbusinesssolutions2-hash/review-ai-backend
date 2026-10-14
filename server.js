@@ -147,13 +147,13 @@ app.post('/api/ai/generate', async (req, res) => {
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      return res.status(500).json({ success: false, error: 'GEMINI_API_KEY not configured on Render.' });
+      return res.status(500).json({ success: false, error: 'GEMINI_API_KEY not configured.' });
     }
 
-    const prompt = `Write a polite, professional, and appreciative business reply to this Google review. 
+    const prompt = `Write a polite, professional, and personalized business reply to this Google review. 
     Rating: ${starRating} stars.
     Review: "${reviewText}"
-    Keep it concise and friendly.`;
+    Tailor the response specifically to what the customer said. Keep it concise and friendly.`;
 
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
@@ -164,7 +164,11 @@ app.post('/api/ai/generate', async (req, res) => {
     });
 
     const data = await response.json();
-    const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Thank you for your feedback!';
+    const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!aiReply) {
+      return res.json({ success: true, reply: `Thank you for the ${starRating.toLowerCase()} rating! We appreciate your feedback.` });
+    }
 
     res.json({ success: true, reply: aiReply.trim() });
   } catch (error) {
