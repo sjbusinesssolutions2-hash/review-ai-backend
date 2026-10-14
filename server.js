@@ -178,17 +178,18 @@ app.post('/api/reviews/autopilot', async (req, res) => {
       const starRating = review.starRating || 'FIVE';
       const reviewerName = review.reviewer?.displayName || 'Valued Customer';
 
-      const prompt = `Write a professional, warm, and highly personalized business reply to this review.
+      const prompt = `Write a professional, warm, and highly personalized business reply to this customer review.
       Customer Name: ${reviewerName}
       Star Rating: ${starRating}
-      Review: "${reviewText}"
+      Review Text: "${reviewText}"
 
       Rules:
-      1. Reference specific details mentioned in the customer review.
+      1. Directly reference specific details mentioned in the customer's comment.
       2. Do NOT use generic sentences like "Thank you for your feedback!".
       3. Keep response to 2-3 sentences.`;
 
-      const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      // Updated to valid gemini-2.5-flash endpoint
+      const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
