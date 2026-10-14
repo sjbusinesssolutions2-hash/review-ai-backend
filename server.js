@@ -163,6 +163,11 @@ app.post('/api/reviews/autopilot', async (req, res) => {
       ];
     }
 
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ success: false, error: 'GEMINI_API_KEY missing in environment.' });
+    }
+
     let processedCount = 0;
     const activityLog = [];
 
@@ -171,20 +176,34 @@ app.post('/api/reviews/autopilot', async (req, res) => {
 
       const reviewText = review.comment || 'Great service!';
       const starRating = review.starRating || 'FIVE';
+      const reviewerName = review.reviewer?.displayName || 'Valued Customer';
 
-      const apiKey = process.env.GEMINI_API_KEY;
-      const prompt = `Write a polite, professional, and appreciative business reply for this review:
-      Rating: ${starRating} stars
+      const prompt = `Write a professional, warm, and highly personalized business reply to this review.
+      Customer Name: ${reviewerName}
+      Star Rating: ${starRating}
       Review: "${reviewText}"
-      Keep it friendly and concise.`;
+
+      Rules:
+      1. Reference specific details mentioned in the customer review.
+      2. Do NOT use generic sentences like "Thank you for your feedback!".
+      3. Keep response to 2-3 sentences.`;
 
       const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
       });
+
       const aiData = await aiRes.json();
-      const replyText = aiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "Thank you for your feedback!";
+      if (aiData.error) {
+        console.error('Gemini API Error:', aiData.error);
+        return res.status(500).json({ success: false, error: `Gemini API Error: ${aiData.error.message}` });
+      }
+
+      const replyText = aiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      if (!replyText) {
+        return res.status(500).json({ success: false, error: 'Gemini did not generate a reply payload.' });
+      }
 
       // Automatically Post Reply to Google API (or simulate if mock review)
       if (!review.name.includes('rev_auto_')) {
@@ -200,7 +219,7 @@ app.post('/api/reviews/autopilot', async (req, res) => {
 
       processedCount++;
       activityLog.push({
-        reviewer: review.reviewer?.displayName || 'Customer',
+        reviewer: reviewerName,
         rating: starRating,
         comment: reviewText,
         reply: replyText
