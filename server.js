@@ -121,7 +121,7 @@ app.get('/api/locations', async (req, res) => {
 
 // Robust Gemini AI Generator using v1beta endpoint and modern models
 async function generateGeminiReply(prompt, apiKey) {
-  const models = ['gemini-3.8-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+  const models = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'];
 
   for (const model of models) {
     try {
