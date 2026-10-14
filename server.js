@@ -139,3 +139,36 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+// 4. Gemini AI Reply Generation Route
+app.post('/api/ai/generate', async (req, res) => {
+  try {
+    const { reviewText, starRating } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({ success: false, error: 'GEMINI_API_KEY not configured on Render.' });
+    }
+
+    const prompt = `Write a polite, professional, and appreciative business reply to this Google review. 
+    Rating: ${starRating} stars.
+    Review: "${reviewText}"
+    Keep it concise and friendly.`;
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }]
+      })
+    });
+
+    const data = await response.json();
+    const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Thank you for your feedback!';
+
+    res.json({ success: true, reply: aiReply.trim() });
+  } catch (error) {
+    console.error('Gemini AI error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
