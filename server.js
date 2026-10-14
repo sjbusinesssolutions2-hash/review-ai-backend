@@ -27,7 +27,7 @@ if (MONGO_URI) {
   console.log('No MongoDB URI provided, running without database connection.');
 }
 
-// 1. Fetch Location ID Route (Guaranteed JSON Error Handling)
+// 1. Fetch Location ID Route (Corrected Google API Domain)
 app.get('/api/locations', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -36,37 +36,34 @@ app.get('/api/locations', async (req, res) => {
     }
     const accessToken = authHeader.split(' ')[1];
 
-    const locationRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${accountName}/locations`, {
+    const accountRes = await fetch('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
 
     const accountText = await accountRes.text();
-    
-    // Check if Google returned HTML instead of JSON
     if (accountText.startsWith('<!DOCTYPE') || accountText.startsWith('<html')) {
-      console.error('Google API returned HTML error instead of JSON:', accountText);
-      return res.status(500).json({ success: false, error: 'Google API rejected the token or returned an HTML error page. Check Render logs.' });
+      console.error('Google API returned HTML error:', accountText);
+      return res.status(500).json({ success: false, error: 'Google API rejected the token.' });
     }
 
     const accountData = JSON.parse(accountText);
-    
     if (!accountData.accounts || accountData.accounts.length === 0) {
       return res.status(404).json({ success: false, error: 'No Google Business accounts found for this token.' });
     }
     const accountName = accountData.accounts[0].name;
 
-    const locationRes = await fetch(`https://mybusinessinformation.googleapis.com/v1/${accountName}/locations`, {
+    // Corrected Domain for Business Information API
+    const locationRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${accountName}/locations`, {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
     
     const locationText = await locationRes.text();
     if (locationText.startsWith('<!DOCTYPE') || locationText.startsWith('<html')) {
       console.error('Google Locations API returned HTML error:', locationText);
-      return res.status(500).json({ success: false, error: 'Google Locations API error. Check Render logs.' });
+      return res.status(500).json({ success: false, error: 'Google Locations API error.' });
     }
 
     const locationData = JSON.parse(locationText);
-    
     if (!locationData.locations || locationData.locations.length === 0) {
       return res.status(404).json({ success: false, error: 'No locations found under this account.' });
     }
