@@ -117,3 +117,10 @@ app.post('/api/reviews/reply', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
