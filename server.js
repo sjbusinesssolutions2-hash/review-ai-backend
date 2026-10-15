@@ -99,7 +99,6 @@ app.get('/api/locations/all', async (req, res) => {
       const locData = await locRes.json();
       if (locData.locations) {
         locData.locations.forEach(loc => {
-          // loc.name is usually "locations/xxxxxx". We combine it with account.name ("accounts/yyyyyy")
           const fullResourceName = `${account.name}/${loc.name}`;
           allLocations.push({
             name: fullResourceName,
@@ -109,7 +108,6 @@ app.get('/api/locations/all', async (req, res) => {
       }
     }
 
-    // Fallback search if account iteration yields nothing
     if (allLocations.length === 0) {
       const fallbackRes = await fetch('https://mybusinessbusinessinformation.googleapis.com/v1/accounts/-/locations?readMask=name,title', {
         headers: { 'Authorization': `Bearer ${accessToken}` }
@@ -132,21 +130,17 @@ app.get('/api/locations/all', async (req, res) => {
   }
 });
 
-// Helper: Scan multiple potential v4 path variations to guarantee review retrieval
-async function fetchReviewsRobust(locationPath, accessToken) {
-  // Clean up path variations to try
+// Robust Diagnostic Review Fetcher
+async function fetchReviewsWithDiagnostics(locationPath, accessToken) {
   const cleanLoc = locationPath.replace('accounts/-/', '').replace('accounts/', '');
-  // Extract just the location ID if nested
   const locationId = cleanLoc.includes('/') ? cleanLoc.split('/').pop() : cleanLoc;
 
-  // Build possible paths to query against Google v4 endpoint
   const candidatePaths = [
     locationPath,
     `accounts/-/${locationPath.replace('accounts/-/', '')}`,
     `accounts/-/locations/${locationId}`
   ];
 
-  // Also extract account ID if present
   if (locationPath.includes('accounts/')) {
     const parts = locationPath.split('/');
     const accIdx = parts.indexOf('accounts');
@@ -156,23 +150,27 @@ async function fetchReviewsRobust(locationPath, accessToken) {
     }
   }
 
-  // Deduplicate candidate paths
   const uniquePaths = [...new Set(candidatePaths)];
 
   for (const path of uniquePaths) {
     try {
       const targetUrl = `https://mybusiness.googleapis.com/v4/${path}/reviews`;
-      console.log(`Querying reviews at: ${targetUrl}`);
+      console.log(`[DIAGNOSTIC] Querying Google API: ${targetUrl}`);
+      
       const response = await fetch(targetUrl, {
         headers: { 'Authorization': `Bearer ${accessToken}` }
       });
+      
       const data = await response.json();
+      console.log(`[DIAGNOSTIC] Response status for path ${path}:`, response.status);
+      console.log(`[DIAGNOSTIC] Response payload:`, JSON.stringify(data));
+
       if (data.reviews && data.reviews.length > 0) {
-        console.log(`Successfully found ${data.reviews.length} reviews using path: ${path}`);
+        console.log(`[SUCCESS] Found ${data.reviews.length} reviews using path: ${path}`);
         return data.reviews;
       }
     } catch (err) {
-      console.log(`Path ${path} failed:`, err.message);
+      console.error(`[ERROR] Path ${path} exception:`, err.message);
     }
   }
   return [];
@@ -192,7 +190,7 @@ app.post('/api/reviews/fetch', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Location name is required' });
     }
 
-    const reviews = await fetchReviewsRobust(locationName, accessToken);
+    const reviews = await fetchReviewsWithDiagnostics(locationName, accessToken);
     res.json({ success: true, reviews });
   } catch (error) {
     console.error('Fetch reviews error:', error);
@@ -241,7 +239,7 @@ app.post('/api/reviews/autopilot', async (req, res) => {
     const accessToken = authHeader.split(' ')[1];
     const { locationName } = req.body;
 
-    const reviews = await fetchReviewsRobust(locationName, accessToken);
+    const reviews = await fetchReviewsWithDiagnostics(locationName, accessToken);
 
     if (reviews.length === 0) {
       return res.json({ success: true, message: 'No live reviews found for this location.', activityLog: [] });
@@ -282,7 +280,6 @@ app.post('/api/reviews/autopilot', async (req, res) => {
       let replyText = await generateGeminiReply(prompt, apiKey);
       if (!replyText) replyText = `ERROR: Gemini API busy or key invalid.`;
 
-      // Post Reply to Google Review API
       await fetch(`https://mybusiness.googleapis.com/v4/${review.name}/reply`, {
         method: 'PUT',
         headers: {
@@ -292,19 +289,11 @@ app.post('/api/reviews/autopilot', async (req, res) => {
         body: JSON.stringify({ comment: replyText })
       });
 
-      processedCount++;
-      activityLog.push({
-        reviewer: reviewerName,
-        rating: starRating,
-        comment: reviewText,
-        reply: replyText,
-        status: 'Newly Replied'
-      });
     }
 
     res.json({ 
       success: true, 
-      message: `Autopilot complete! Replied to ${processedCount} pending review(s).`,
+      message: `Autopilot complete! Processed ${reviews.length} reviews.`,
       activityLog 
     });
   } catch (error) {
