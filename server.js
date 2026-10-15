@@ -302,5 +302,88 @@ app.post('/api/reviews/autopilot', async (req, res) => {
   }
 });
 
+// 5. Background Cron Auto-Pilot Route (No browser needed)
+app.get('/api/cron/autopilot', async (req, res) => {
+  try {
+    // Fetch the latest active user token stored in MongoDB Atlas
+    const user = await User.findOne().sort({ tokenExpiry: -1 });
+    if (!user || !user.accessToken) {
+      return res.status(401).json({ success: false, error: 'No active Google user token found in DB.' });
+    }
+
+    const accessToken = user.accessToken;
+
+    // Fetch all Google Business locations linked to this account
+    const accountsRes = await fetch('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+    const accountsData = await accountsRes.json();
+    const accounts = accountsData.accounts || [];
+
+    let allLocations = [];
+    for (const account of accounts) {
+      const locRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${account.name}/locations?readMask=name,title`, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      const locData = await locRes.json();
+      if (locData.locations) {
+        locData.locations.forEach(loc => {
+          allLocations.push(`${account.name}/${loc.name}`);
+        });
+      }
+    }
+
+    if (allLocations.length === 0) {
+      return res.json({ success: true, message: 'No locations found to sync.' });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    let totalReplied = 0;
+
+    // Process unreplied reviews across all business locations
+    for (const locationPath of allLocations) {
+      const reviews = await fetchReviewsWithDiagnostics(locationPath, accessToken);
+      
+      for (const review of reviews) {
+        if (review.reviewReply) continue; // Skip if already replied
+
+        const reviewText = review.comment || 'Great service!';
+        const starRating = review.starRating || 'FIVE';
+        const reviewerName = review.reviewer?.displayName || 'Valued Customer';
+
+        const prompt = `Write a professional, warm, and highly personalized business reply to this customer review.
+        Customer Name: ${reviewerName}
+        Star Rating: ${starRating}
+        Review Text: "${reviewText}"
+
+        Rules:
+        1. Directly reference specific details mentioned in the customer's comment.
+        2. Do NOT use generic boilerplate sentences.
+        3. Keep response to 2-3 sentences.`;
+
+        let replyText = await generateGeminiReply(prompt, apiKey);
+        if (replyText) {
+          await fetch(`https://mybusiness.googleapis.com/v4/${review.name}/reply`, {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ comment: replyText })
+          });
+          totalReplied++;
+        }
+      }
+    }
+
+    console.log(`[CRON SUCCESS] Auto-replied to ${totalReplied} new review(s)`);
+    res.json({ success: true, message: `Cron run complete. Replied to ${totalReplied} new review(s).` });
+  } catch (error) {
+    console.error('Cron job execution error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
