@@ -19,7 +19,7 @@ mongoose.connect(process.env.MONGO_URI, {
 }).then(() => console.log('MongoDB Connected Successfully'))
   .catch(err => console.error('MongoDB connection error:', err));
 
-// 1. User Schema
+// User Schema
 const userSchema = new mongoose.Schema({
   googleId: { type: String, unique: true, sparse: true },
   email: { type: String, unique: true },
@@ -30,11 +30,11 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema);
 
-// 2. Per-Location Subscription Schema
+// Per-Location Subscription Schema
 const subscriptionSchema = new mongoose.Schema({
   userEmail: String,
-  locationName: String,     // e.g. "accounts/102.../locations/882..."
-  locationTitle: String,    // e.g. "India Bat Service - Branch 1"
+  locationName: String,
+  locationTitle: String,
   status: { type: String, enum: ['free', 'active', 'canceled'], default: 'free' },
   razorpayOrderId: String,
   razorpayPaymentId: String,
@@ -45,18 +45,35 @@ const Subscription = mongoose.model('Subscription', subscriptionSchema);
 // Initialize Gemini AI
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// --- GOOGLE OAUTH EXCHANGE ROUTE ---
-app.post('/api/auth/google', async (req, res) => {
+// --- GOOGLE OAUTH DIRECT ROUTES ---
+const getOAuthClient = () => {
+  return new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_CALLBACK_URL || 'https://review-ai-backend-03sb.onrender.com/auth/google/callback'
+  );
+};
+
+app.get('/auth/google', (req, res) => {
+  const oauth2Client = getOAuthClient();
+  const url = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: [
+      'https://www.googleapis.com/auth/userinfo.email',
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'https://www.googleapis.com/auth/business.manage'
+    ],
+    prompt: 'consent'
+  });
+  res.redirect(url);
+});
+
+app.get('/auth/google/callback', async (req, res) => {
   try {
-    const { code, redirectUri } = req.body;
-    if (!code) return res.status(400).json({ success: false, error: 'Authorization code missing' });
+    const { code } = req.query;
+    if (!code) return res.redirect('/index.html?error=no_code');
 
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET,
-      redirectUri
-    );
-
+    const oauth2Client = getOAuthClient();
     const { tokens } = await oauth2Client.getToken(code);
     oauth2Client.setCredentials(tokens);
 
@@ -78,20 +95,17 @@ app.post('/api/auth/google', async (req, res) => {
       { upsert: true, new: true }
     );
 
-    res.json({ success: true, accessToken: tokens.access_token, email: userInfo.data.email, name: userInfo.data.name });
+    const frontendUrl = process.env.FRONTEND_URL || 'https://your-username.github.io/your-repo';
+    res.redirect(`${frontendUrl}/dashboard.html?email=${encodeURIComponent(userInfo.data.email)}&name=${encodeURIComponent(userInfo.data.name || '')}`);
   } catch (error) {
-    console.error('Auth error:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('OAuth Callback Error:', error);
+    res.redirect('/index.html?error=auth_failed');
   }
 });
 
-// --- HELPER: GET AUTHENTICATED CLIENT FOR ANY USER ---
+// --- HELPER: GET AUTH CLIENT ---
 async function getAuthenticatedClient(userDoc) {
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET
-  );
-
+  const oauth2Client = getOAuthClient();
   oauth2Client.setCredentials({
     access_token: userDoc.accessToken,
     refresh_token: userDoc.refreshToken,
@@ -110,11 +124,11 @@ async function getAuthenticatedClient(userDoc) {
   return oauth2Client;
 }
 
-// --- FETCH BUSINESS LOCATIONS (Mapped with Subscription Plan Status) ---
+// --- FETCH BUSINESS LOCATIONS ---
 app.get('/api/locations', async (req, res) => {
   try {
     const email = req.query.email;
-    if (!email) return res.status(400).json({ success: false, error: 'Email query parameter required' });
+    if (!email) return res.status(400).json({ success: false, error: 'Email required' });
 
     const user = await User.findOne({ email });
     if (!user) return res.status(404).json({ success: false, error: 'User not found' });
@@ -135,11 +149,10 @@ app.get('/api/locations', async (req, res) => {
           allLocations.push(...locRes.data.locations);
         }
       } catch (err) {
-        console.error('Error fetching locations for account:', account.name);
+        console.error('Error fetching locations:', err.message);
       }
     }
 
-    // Attach individual subscription status per location from MongoDB
     const enrichedLocations = await Promise.all(allLocations.map(async (loc) => {
       let sub = await Subscription.findOne({ userEmail: email, locationName: loc.name });
       if (!sub) {
@@ -159,7 +172,7 @@ app.get('/api/locations', async (req, res) => {
   }
 });
 
-// --- FETCH REVIEWS ROUTE ---
+// --- FETCH REVIEWS ---
 app.get('/api/reviews', async (req, res) => {
   try {
     const { email, locationName } = req.query;
@@ -179,14 +192,13 @@ app.get('/api/reviews', async (req, res) => {
   }
 });
 
-// --- FREE TOOLS: AI REPLY GENERATOR ---
+// --- FREE TOOLS ---
 app.post('/api/tools/generate-reply', async (req, res) => {
   try {
     const { reviewText, tone } = req.body;
     if (!reviewText) return res.status(400).json({ success: false, error: 'Review text required' });
 
     const prompt = `Write a ${tone || 'professional'} business owner response to this customer review: "${reviewText}". Keep it warm, polite, and under 3 sentences.`;
-    
     const aiResponse = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: prompt
@@ -198,22 +210,15 @@ app.post('/api/tools/generate-reply', async (req, res) => {
   }
 });
 
-// --- RAZORPAY PAYMENT ENDPOINTS ---
+// --- PAYMENTS ---
 app.post('/api/payments/create-order', async (req, res) => {
   try {
     const { email, locationName, amount } = req.body;
-    // Note: In production, initialize razorpay SDK using process.env.RAZORPAY_KEY_ID & SECRET
-    // For now we simulate or mock order generation structure securely:
     const orderId = 'order_' + crypto.randomBytes(8).toString('hex');
-    
     res.json({
       success: true,
       keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_mockkey',
-      order: {
-        id: orderId,
-        amount: amount || 2900,
-        currency: 'INR'
-      }
+      order: { id: orderId, amount: amount || 2900, currency: 'INR' }
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -223,45 +228,36 @@ app.post('/api/payments/create-order', async (req, res) => {
 app.post('/api/payments/verify', async (req, res) => {
   try {
     const { email, locationName, razorpay_order_id, razorpay_payment_id } = req.body;
-    
-    // Update or create subscription for this specific location
     await Subscription.findOneAndUpdate(
       { userEmail: email, locationName },
       { 
         status: 'active',
         razorpayOrderId: razorpay_order_id,
         razorpayPaymentId: razorpay_payment_id,
-        currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days Pro
+        currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
       },
       { upsert: true, new: true }
     );
-
-    res.json({ success: true, message: 'Payment verified and location upgraded to Pro' });
+    res.json({ success: true, message: 'Payment verified successfully' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// --- ADMIN MASTER CONTROL PANEL ENDPOINTS ---
+// --- ADMIN ---
 app.get('/api/admin/metrics', async (req, res) => {
   try {
     const adminKey = req.headers['x-admin-key'];
     if (adminKey !== process.env.ADMIN_SECRET_KEY) {
-      return res.status(403).json({ success: false, error: 'Unauthorized admin access' });
+      return res.status(403).json({ success: false, error: 'Unauthorized' });
     }
-
     const totalUsers = await User.countDocuments();
     const totalLocations = await Subscription.countDocuments();
     const activeSubs = await Subscription.countDocuments({ status: 'active' });
-    const mrr = activeSubs * 2900; // ₹2900 per pro branch
-
+    const mrr = activeSubs * 2900;
     const allSubscriptions = await Subscription.find().sort({ currentPeriodEnd: -1 });
 
-    res.json({
-      success: true,
-      metrics: { totalUsers, totalLocations, activeSubs, mrr },
-      subscriptions: allSubscriptions
-    });
+    res.json({ success: true, metrics: { totalUsers, totalLocations, activeSubs, mrr }, subscriptions: allSubscriptions });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -271,83 +267,58 @@ app.post('/api/admin/override-plan', async (req, res) => {
   try {
     const adminKey = req.headers['x-admin-key'];
     if (adminKey !== process.env.ADMIN_SECRET_KEY) {
-      return res.status(403).json({ success: false, error: 'Unauthorized admin access' });
+      return res.status(403).json({ success: false, error: 'Unauthorized' });
     }
-
     const { locationName, status } = req.body;
     await Subscription.findOneAndUpdate({ locationName }, { status });
-
-    res.json({ success: true, message: `Location plan updated to ${status}` });
+    res.json({ success: true, message: `Updated to ${status}` });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// --- AUTOPILOT ENGINE (Manual & Background Cron Execution) ---
-async function processAutopilotForUser(user) {
-  try {
-    const authClient = await getAuthenticatedClient(user);
-    const mybusinessbusinessinformation = google.mybusinessbusinessinformation({ version: 'v1', auth: authClient });
-    
-    const accountManagement = google.mybusinessaccountmanagement({ version: 'v1', auth: authClient });
-    const accountsRes = await accountManagement.accounts.list();
-    const accounts = accountsRes.data.accounts || [];
-
-    for (const account of accounts) {
-      const locRes = await mybusinessbusinessinformation.accounts.locations.list({ parent: account.name });
-      const locations = locRes.data.locations || [];
-
-      for (const loc of locations) {
-        // Check if this location has an active Pro subscription before running background AI replies
-        const sub = await Subscription.findOne({ userEmail: user.email, locationName: loc.name });
-        if (!sub || sub.status !== 'active') {
-          continue; // Skip free locations on background cron autopilot
-        }
-
-        const reviewsUrl = `https://mybusiness.googleapis.com/v4/${loc.name}/reviews`;
-        const reviewsRes = await authClient.request({ url: reviewsUrl });
-        const reviews = reviewsRes.data.reviews || [];
-
-        for (const review of reviews) {
-          if (!review.reviewReply && review.comment) {
-            const prompt = `Write a professional, appreciative business owner response to this Google review. Reviewer rating: ${review.starRating}. Comment: "${review.comment}". Keep it warm, polite, and under 3 sentences.`;
-            
-            const aiResponse = await ai.models.generateContent({
-              model: 'gemini-2.5-flash',
-              contents: prompt
-            });
-
-            const replyText = aiResponse.text.trim();
-
-            const replyUrl = `https://mybusiness.googleapis.com/v4/${loc.name}/reviews/${review.reviewId}/reply`;
-            await authClient.request({
-              method: 'PUT',
-              url: replyUrl,
-              data: { comment: replyText }
-            });
-
-            console.log(`Successfully auto-replied to review for Pro location: ${loc.title}`);
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.error(`Autopilot error for user ${user.email}:`, err.message);
-  }
-}
-
+// --- CRON AUTOPILOT ---
 app.get('/api/cron/autopilot', async (req, res) => {
   try {
-    console.log('Running 24/7 background cron autopilot check...');
     const allUsers = await User.find({ refreshToken: { $exists: true } });
-
     for (const user of allUsers) {
-      await processAutopilotForUser(user);
-    }
+      try {
+        const authClient = await getAuthenticatedClient(user);
+        const accountManagement = google.mybusinessaccountmanagement({ version: 'v1', auth: authClient });
+        const accountsRes = await accountManagement.accounts.list();
+        const accounts = accountsRes.data.accounts || [];
 
-    res.json({ success: true, message: `Cron executed for ${allUsers.length} users.` });
+        for (const account of accounts) {
+          const mybusinessbusinessinformation = google.mybusinessbusinessinformation({ version: 'v1', auth: authClient });
+          const locRes = await mybusinessbusinessinformation.accounts.locations.list({ parent: account.name });
+          const locations = locRes.data.locations || [];
+
+          for (const loc of locations) {
+            const sub = await Subscription.findOne({ userEmail: user.email, locationName: loc.name });
+            if (!sub || sub.status !== 'active') continue;
+
+            const reviewsUrl = `https://mybusiness.googleapis.com/v4/${loc.name}/reviews`;
+            const reviewsRes = await authClient.request({ url: reviewsUrl });
+            const reviews = reviewsRes.data.reviews || [];
+
+            for (const review of reviews) {
+              if (!review.reviewReply && review.comment) {
+                const prompt = `Write a professional, appreciative business owner response to this Google review. Reviewer rating: ${review.starRating}. Comment: "${review.comment}". Keep it warm, polite, and under 3 sentences.`;
+                const aiResponse = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+                const replyText = aiResponse.text.trim();
+
+                const replyUrl = `https://mybusiness.googleapis.com/v4/${loc.name}/reviews/${review.reviewId}/reply`;
+                await authClient.request({ method: 'PUT', url: replyUrl, data: { comment: replyText } });
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error(`Cron error for user ${user.email}:`, err.message);
+      }
+    }
+    res.json({ success: true, message: 'Cron executed successfully' });
   } catch (error) {
-    console.error('Cron job error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
