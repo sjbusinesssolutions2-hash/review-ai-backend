@@ -12,12 +12,12 @@ const session = require('express-session');
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+app.set('trust proxy', 1); // Trust Render's secure proxy
 
 // Middleware
 app.use(express.json());
 app.use(cors({
-  origin: ['https://sjbusinesssolutions2-hash.github.io', 'http://localhost:3000'], // Update with your GitHub Pages URL if different
+  origin: ['https://sjbusinesssolutions2-hash.github.io', 'http://localhost:3000'],
   credentials: true
 }));
 
@@ -62,7 +62,8 @@ const User = mongoose.model('User', userSchema);
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: '/auth/google/callback'
+    callbackURL: 'https://review-ai-backend-03sb.onrender.com/auth/google/callback',
+    proxy: true
   },
   async (accessToken, refreshToken, profile, done) => {
     try {
@@ -109,7 +110,6 @@ app.get('/auth/google',
 app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/login.html' }),
   (req, res) => {
-    // Successful authentication, redirect back to frontend inbox with token
     const token = req.user._id;
     res.redirect(`https://sjbusinesssolutions2-hash.github.io/inbox.html?token=${token}&userId=${req.user._id}`);
   }
@@ -144,6 +144,7 @@ app.get('/', (req, res) => {
 });
 
 // Start Server
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Backend server running on port ${PORT}`);
 });
