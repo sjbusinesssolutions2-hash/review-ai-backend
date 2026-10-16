@@ -1,6 +1,6 @@
 /**
  * ProsperAI - Enterprise SaaS Backend Server (server.js)
- * Stack: Node.js, Express, MongoDB Atlas, Google OAuth / Business Profile APIs, Razorpay
+ * Stack: Node.js, Express, MongoDB Atlas, Google OAuth / Business Profile APIs
  */
 
 const express = require('express');
@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 5000;
 // Middleware
 app.use(express.json());
 app.use(cors({
-  origin: ['https://your-github-username.github.io', 'http://localhost:3000'], // Update with your frontend URL
+  origin: ['https://sjbusinesssolutions2-hash.github.io', 'http://localhost:3000'], // Update with your GitHub Pages URL if different
   credentials: true
 }));
 
@@ -31,7 +31,7 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 // MongoDB Atlas Connection
-const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://username:password@cluster.mongodb.net/prosperai?retryWrites=true&w=majority';
+const MONGO_URI = process.env.MONGO_URI;
 mongoose.connect(MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
@@ -60,8 +60,8 @@ const User = mongoose.model('User', userSchema);
 
 // Passport Google OAuth Strategy Configuration
 passport.use(new GoogleStrategy({
-    clientID: process.env.GOOGLE_CLIENT_ID || 'your-google-client-id',
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || 'your-google-client-secret',
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     callbackURL: '/auth/google/callback'
   },
   async (accessToken, refreshToken, profile, done) => {
@@ -110,8 +110,8 @@ app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/login.html' }),
   (req, res) => {
     // Successful authentication, redirect back to frontend inbox with token
-    const token = req.user._id; // Using user ID token for session state
-    res.redirect(`https://your-github-username.github.io/inbox.html?token=${token}&userId=${req.user._id}`);
+    const token = req.user._id;
+    res.redirect(`https://sjbusinesssolutions2-hash.github.io/inbox.html?token=${token}&userId=${req.user._id}`);
   }
 );
 
@@ -133,8 +133,7 @@ app.get('/api/user', async (req, res) => {
 
 // 2. AI Reply Generation Endpoint
 app.post('/api/ai/reply', async (req, res) => {
-  const { reviewText, rating } = req.body;
-  // Mock AI response generation (Integrate OpenAI / Gemini API here)
+  const { rating } = req.body;
   const aiReply = `Hi there! Thank you for the wonderful ${rating}-star rating. We're thrilled you enjoyed our service and look forward to serving you again soon!`;
   res.json({ reply: aiReply });
 });
