@@ -18,9 +18,9 @@ mongoose.connect(process.env.MONGO_URI, {
 }).then(() => console.log('MongoDB Connected Successfully'))
   .catch(err => console.error('MongoDB connection error:', err));
 
-// User Schema for Token Persistence
+// User Schema with sparse googleId to prevent validation crashes
 const userSchema = new mongoose.Schema({
-  googleId: { type: String, required: true, unique: true },
+  googleId: { type: String, unique: true, sparse: true },
   email: String,
   accessToken: String,
   refreshToken: String,
@@ -49,7 +49,6 @@ app.post('/api/auth/google', async (req, res) => {
     const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
     const userInfo = await oauth2.userinfo.get();
 
-    // Save tokens securely in MongoDB (preserving refresh token if already stored)
     const updateData = {
       email: userInfo.data.email,
       accessToken: tokens.access_token,
@@ -60,8 +59,8 @@ app.post('/api/auth/google', async (req, res) => {
     }
 
     await User.findOneAndUpdate(
-      { googleId: userInfo.data.id },
-      updateData,
+      { email: userInfo.data.email },
+      { googleId: userInfo.data.id, ...updateData },
       { upsert: true, new: true }
     );
 
@@ -85,7 +84,6 @@ async function getAuthenticatedClient(userDoc) {
     expiry_date: userDoc.tokenExpiry ? userDoc.tokenExpiry.getTime() : null
   });
 
-  // Automatically refresh token if expired
   oauth2Client.on('tokens', async (tokens) => {
     if (tokens.access_token) {
       userDoc.accessToken = tokens.access_token;
@@ -119,7 +117,8 @@ app.get('/api/locations/all', async (req, res) => {
 
     for (const account of accounts) {
       try {
-        const locRes = await mybusinessbusinessinformation.locations.list({ parent: account.name });
+        // Corrected to accounts.locations.list
+        const locRes = await mybusinessbusinessinformation.accounts.locations.list({ parent: account.name });
         if (locRes.data.locations) {
           allLocations.push(...locRes.data.locations);
         }
@@ -164,13 +163,13 @@ async function processAutopilotForUser(user) {
     const authClient = await getAuthenticatedClient(user);
     const mybusinessbusinessinformation = google.mybusinessbusinessinformation({ version: 'v1', auth: authClient });
     
-    // Get accounts & locations
     const accountManagement = google.mybusinessaccountmanagement({ version: 'v1', auth: authClient });
     const accountsRes = await accountManagement.accounts.list();
     const accounts = accountsRes.data.accounts || [];
 
     for (const account of accounts) {
-      const locRes = await mybusinessbusinessinformation.locations.list({ parent: account.name });
+      // Corrected to accounts.locations.list
+      const locRes = await mybusinessbusinessinformation.accounts.locations.list({ parent: account.name });
       const locations = locRes.data.locations || [];
 
       for (const loc of locations) {
@@ -179,7 +178,6 @@ async function processAutopilotForUser(user) {
         const reviews = reviewsRes.data.reviews || [];
 
         for (const review of reviews) {
-          // If review has no reply yet, generate one via Gemini AI
           if (!review.reviewReply && review.comment) {
             const prompt = `Write a professional, appreciative business owner response to this Google review. Reviewer rating: ${review.starRating}. Comment: "${review.comment}". Keep it warm, polite, and under 3 sentences.`;
             
@@ -190,7 +188,6 @@ async function processAutopilotForUser(user) {
 
             const replyText = aiResponse.text().trim();
 
-            // Post reply back to Google
             const replyUrl = `https://mybusiness.googleapis.com/v4/${loc.name}/reviews/${review.reviewId}/reply`;
             await authClient.request({
               method: 'PUT',
@@ -225,7 +222,7 @@ app.post('/api/reviews/autopilot', async (req, res) => {
   }
 });
 
-// --- 24/7 BACKGROUND CRON ENDPOINT (Pung by cron-job.org) ---
+// --- 24/7 BACKGROUND CRON ENDPOINT ---
 app.get('/api/cron/autopilot', async (req, res) => {
   try {
     console.log('Running 24/7 background cron autopilot check...');
