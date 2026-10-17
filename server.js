@@ -116,7 +116,7 @@ app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/review-ai-app/login.html' }),
   (req, res) => {
     const token = req.user._id;
-    res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?token=${token}&userId=${req.user._id}`);
+    res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/login.html?token=${token}&userId=${req.user._id}`);
   }
 );
 
