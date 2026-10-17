@@ -223,7 +223,35 @@ app.get('/api/cron/autopilot', async (req, res) => {
     res.status(500).json({ error: 'Failed to execute autopilot cron' });
   }
 });
-                                          
+
+// AI Post Generator Endpoint with Image Generation Prompt
+app.post('/api/ai/post', async (req, res) => {
+  const { topic, businessType, businessName } = req.body;
+  try {
+    const textPrompt = `Create an engaging local Google Business Profile update post for ${businessName || 'our local business'} (${businessType || 'services'}). Topic: "${topic || 'Quality customer service and weekly updates'}". Include local SEO keywords, an engaging hook, and a clear call-to-action. Keep it concise.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: textPrompt,
+    });
+
+    const postText = response.text.trim();
+    
+    // Generate clean business image URL based on post topic
+    const imageKeyword = encodeURIComponent(`${businessType || 'business'} ${topic || 'service'}`);
+    const imageUrl = `https://image.pollinations.ai/prompt/high%20quality%20photo%20of%20${imageKeyword}?width=800&height=600&nologo=true`;
+
+    res.json({ 
+      postContent: postText,
+      imageUrl: imageUrl
+    });
+  } catch (err) {
+    console.error('Gemini AI Post Error:', err);
+    res.status(500).json({ error: 'Failed to generate AI post' });
+  }
+});
+
+
 // Start Server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
