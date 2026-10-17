@@ -1,8 +1,3 @@
-/**
- * ProsperAI - Enterprise SaaS Backend Server (server.js)
- * Stack: Node.js, Express, MongoDB Atlas, Google OAuth, Google Business Profile APIs, Google Gemini AI
- */
-
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -107,6 +102,36 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
+// --- HELPER: INFINITE RETRY / PERSISTENT GEMINI GENERATOR ---
+async function generateAIContentPersistent(prompt) {
+  const models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+  let attempts = 0;
+  const maxAttempts = 10; // Keep trying up to 10 times with exponential delay
+
+  while (attempts < maxAttempts) {
+    const currentModel = models[attempts % models.length];
+    try {
+      console.log(`[AI] Attempt ${attempts + 1} using model ${currentModel}...`);
+      const response = await ai.models.generateContent({
+        model: currentModel,
+        contents: prompt,
+      });
+
+      if (response && response.text && response.text.trim().length > 0) {
+        return response.text.trim();
+      }
+    } catch (err) {
+      console.warn(`[AI Warning] Model ${currentModel} failed or rate limited: ${err.message}. Retrying...`);
+    }
+
+    attempts++;
+    // Exponential backoff delay (1s, 2s, 3s, etc.)
+    await new Promise(resolve => setTimeout(resolve, Math.min(attempts * 1000, 5000)));
+  }
+
+  throw new Error('AI Generation failed after maximum persistent attempts.');
+}
+
 // --- AUTH ROUTES ---
 app.get('/auth/google',
   passport.authenticate('google', { scope: ['profile', 'email', 'https://www.googleapis.com/auth/business.manage'] })
@@ -116,13 +141,13 @@ app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/review-ai-app/login.html' }),
   (req, res) => {
     const token = req.user._id;
-    res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/login.html?token=${token}&userId=${req.user._id}`);
+    res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?token=${token}&userId=${req.user._id}`);
   }
 );
 
 // --- REAL API ROUTES ---
 
-// 1. Fetch Real Business Locations from Google Business Profile API
+// 1. Fetch Real Business Locations
 app.get('/api/locations', async (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
@@ -130,15 +155,6 @@ app.get('/api/locations', async (req, res) => {
   try {
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
-
-    // Setup OAuth2 client using user's stored access token
-    const oauth2Client = new google.auth.OAuth2();
-    oauth2Client.setCredentials({ access_token: user.accessToken });
-
-    // Call Google Business Profile API to fetch accounts/locations
-    const mybusiness = google.mybusinessbusinessinformation({ version: 'v1', auth: oauth2Client });
-    
-    // For production safety, we return synchronized DB locations combined with live API accounts
     res.json({ locations: user.locations });
   } catch (err) {
     console.error('Error fetching locations:', err);
@@ -146,43 +162,43 @@ app.get('/api/locations', async (req, res) => {
   }
 });
 
-// 2. Real AI Review Reply Generation (Gemini SDK)
+// 2. Persistent AI Review Reply Generation
 app.post('/api/ai/reply', async (req, res) => {
   const { reviewText, rating, businessName } = req.body;
-  try {
-    const prompt = `Write a professional, engaging response to a ${rating}-star Google review for ${businessName || 'our business'}. Customer review: "${reviewText}". Keep it courteous, brand-focused, and under 60 words.`;
-    
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-    });
+  const prompt = `Write a professional, warm, engaging response to a ${rating}-star Google review for ${businessName || 'our business'}. Customer review: "${reviewText}". Keep it courteous, brand-focused, personalized, and under 60 words.`;
 
-    res.json({ reply: response.text.trim() });
+  try {
+    const replyText = await generateAIContentPersistent(prompt);
+    res.json({ reply: replyText });
   } catch (err) {
-    console.error('Gemini AI Error:', err);
-    res.status(500).json({ error: 'Failed to generate AI reply' });
+    console.error('Persistent Gemini AI Error:', err);
+    res.status(500).json({ error: 'AI Service currently overloaded. Please try again.' });
   }
 });
 
-// 3. Real AI Daily Post Generator (Free Tier & Autopilot)
+// 3. Persistent AI Daily Post Generator with Visual Asset
 app.post('/api/ai/post', async (req, res) => {
-  const { topic, businessType } = req.body;
+  const { topic, businessType, businessName } = req.body;
+  const textPrompt = `Create an engaging, high-converting local update post for a Google Business Profile (${businessName || 'our business'}). Business Type: "${businessType || 'Local Services'}". Topic/Focus: "${topic || 'Quality customer service and weekly updates'}". Include local SEO keywords, an engaging hook, and a clear call-to-action. Keep it concise.`;
+
   try {
-    const prompt = `Create an engaging local update post for a Google Business Profile (${businessType || 'local service business'}). Topic/Request: "${topic || 'Highlight our professional services and customer satisfaction'}". Include local SEO keywords, an engaging hook, and a clear call to action.`;
+    const postText = await generateAIContentPersistent(textPrompt);
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
+    // Dynamic high-resolution business image topic
+    const imageSearchKey = encodeURIComponent(`${businessType || 'business'} ${topic || 'professional'}`);
+    const imageUrl = `https://image.pollinations.ai/prompt/high%20quality%20professional%20photo%20of%20${imageSearchKey}?width=800&height=600&nologo=true`;
+
+    res.json({ 
+      postContent: postText,
+      imageUrl: imageUrl
     });
-
-    res.json({ postContent: response.text.trim() });
   } catch (err) {
-    console.error('Gemini AI Post Error:', err);
-    res.status(500).json({ error: 'Failed to generate AI Google post' });
+    console.error('Persistent Gemini AI Post Error:', err);
+    res.status(500).json({ error: 'Failed to generate AI post' });
   }
 });
 
-// 4. Get User Profile Data
+// 4. Get User Profile
 app.get('/api/user', async (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
@@ -196,61 +212,21 @@ app.get('/api/user', async (req, res) => {
   }
 });
 
-// 5. Health Check
-app.get('/', (req, res) => {
-  res.send('ProsperAI Real Business Backend Server is Live & Running!');
-});
-
-// 6. Automated Daily Google Post Autopilot Cron Endpoint
+// 5. Autopilot Cron Endpoint
 app.get('/api/cron/autopilot', async (req, res) => {
   try {
-    // Fetch all active users to run automated daily local posts
     const users = await User.find({});
-    let processedCount = 0;
-
-    for (const user of users) {
-      // Here we can trigger daily post generation for user locations
-      processedCount++;
-    }
-
-    console.log(`Autopilot cron executed successfully for ${processedCount} accounts.`);
-    res.json({ 
-      success: true, 
-      message: `Autopilot executed successfully. Processed ${processedCount} users.` 
-    });
+    console.log(`[Autopilot Cron] Triggered for ${users.length} accounts.`);
+    res.json({ success: true, message: `Autopilot active for ${users.length} accounts.` });
   } catch (err) {
-    console.error('Autopilot Cron Error:', err);
-    res.status(500).json({ error: 'Failed to execute autopilot cron' });
+    res.status(500).json({ error: 'Autopilot cron failure' });
   }
 });
 
-// AI Post Generator Endpoint with Image Generation Prompt
-app.post('/api/ai/post', async (req, res) => {
-  const { topic, businessType, businessName } = req.body;
-  try {
-    const textPrompt = `Create an engaging local Google Business Profile update post for ${businessName || 'our local business'} (${businessType || 'services'}). Topic: "${topic || 'Quality customer service and weekly updates'}". Include local SEO keywords, an engaging hook, and a clear call-to-action. Keep it concise.`;
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: textPrompt,
-    });
-
-    const postText = response.text.trim();
-    
-    // Generate clean business image URL based on post topic
-    const imageKeyword = encodeURIComponent(`${businessType || 'business'} ${topic || 'service'}`);
-    const imageUrl = `https://image.pollinations.ai/prompt/high%20quality%20photo%20of%20${imageKeyword}?width=800&height=600&nologo=true`;
-
-    res.json({ 
-      postContent: postText,
-      imageUrl: imageUrl
-    });
-  } catch (err) {
-    console.error('Gemini AI Post Error:', err);
-    res.status(500).json({ error: 'Failed to generate AI post' });
-  }
+// 6. Health Check
+app.get('/', (req, res) => {
+  res.send('ProsperAI Persistent Engine is Live & Running!');
 });
-
 
 // Start Server
 const PORT = process.env.PORT || 5000;
