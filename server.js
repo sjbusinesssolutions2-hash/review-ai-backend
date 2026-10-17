@@ -181,16 +181,178 @@ app.get('/api/locations', async (req, res) => {
     await user.save();
 
     res.json({ locations: configuredLocations });
+/**
+ * SJbs.AI - Enterprise Production Backend
+ */
+
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const session = require('express-session');
+const { google } = require('googleapis');
+const { GoogleGenAI } = require('@google/genai');
+require('dotenv').config();
+
+const app = express();
+app.set('trust proxy', 1);
+
+app.use(express.json());
+app.use(cors({
+  origin: ['https://sjbusinesssolutions2-hash.github.io', 'http://localhost:3000'],
+  credentials: true
+}));
+
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'sjbs_ai_production_secret',
+  resave: false,
+  saveUninitialized: false
+}));
+
+app.use(passport.initialize());
+app.use(passport.session());
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+const MONGO_URI = process.env.MONGO_URI;
+mongoose.connect(MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log('MongoDB Atlas Connected'))
+.catch(err => console.error('MongoDB Connection Error:', err));
+
+const userSchema = new mongoose.Schema({
+  googleId: String,
+  displayName: String,
+  email: String,
+  avatar: String,
+  accessToken: String,
+  refreshToken: String,
+  locations: [{
+    locationId: String,
+    locationName: String,
+    rating: { type: Number, default: 5.0 },
+    reviewCount: { type: Number, default: 0 },
+    address: { type: String, default: '' },
+    subscriptionStatus: { type: String, default: 'free' },
+    aiCredits: { type: Number, default: 100 }
+  }],
+  createdAt: { type: Date, default: Date.now }
+});
+
+const User = mongoose.model('User', userSchema);
+
+passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: 'https://review-ai-backend-03sb.onrender.com/auth/google/callback',
+    proxy: true
+  },
+  async (accessToken, refreshToken, profile, done) => {
+    try {
+      let user = await User.findOne({ googleId: profile.id });
+      if (!user) {
+        user = new User({
+          googleId: profile.id,
+          displayName: profile.displayName,
+          email: profile.emails[0].value,
+          avatar: profile.photos[0].value,
+          accessToken,
+          refreshToken
+        });
+      } else {
+        user.accessToken = accessToken;
+        if (refreshToken) user.refreshToken = refreshToken;
+      }
+      await user.save();
+      return done(null, user);
+    } catch (err) {
+      return done(err, null);
+    }
+  }
+));
+
+passport.serializeUser((user, done) => done(null, user.id));
+passport.deserializeUser(async (id, done) => {
+  try {
+    const user = await User.findById(id);
+    done(null, user);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch locations' });
+    done(err, null);
   }
 });
 
-// Fetch Unreplied Google Reviews per Selected Branch
+// Gemini Content Generator
+async function generateGeminiAI(prompt) {
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt
+    });
+    if (response && response.text && response.text.trim().length > 0) {
+      return response.text.trim();
+    }
+  } catch (err) {
+    console.warn('Gemini 2.5 Flash attempt warning:', err.message);
+  }
+  
+  const fallback = await ai.models.generateContent({
+    model: 'gemini-1.5-flash',
+    contents: prompt
+  });
+  return fallback.text.trim();
+}
+
+app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email', 'https://www.googleapis.com/auth/business.manage'] }));
+
+app.get('/auth/google/callback',
+  passport.authenticate('google', { failureRedirect: '/review-ai-app/login.html' }),
+  (req, res) => {
+    res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${req.user._id}`);
+  }
+);
+
+app.get('/api/user', async (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.get('/api/locations', async (req, res) => {
+  const configuredLocations = [
+    {
+      locationId: 'loc_bat_service',
+      locationName: 'India Bat Service',
+      rating: 5.0,
+      reviewCount: 29,
+      address: '36-Sargam society, near...',
+      subscriptionStatus: 'pro',
+      aiCredits: 9999
+    },
+    {
+      locationId: 'loc_sj_solutions',
+      locationName: 'SJ Business Solutions',
+      rating: 0.0,
+      reviewCount: 0,
+      address: 'Main Branch Office',
+      subscriptionStatus: 'free',
+      aiCredits: 100
+    }
+  ];
+  res.json({ locations: configuredLocations });
+});
+
 app.get('/api/reviews', async (req, res) => {
   const { locationId } = req.query;
 
-  // Branch 1: India Bat Service Unreplied Reviews
   if (locationId === 'loc_bat_service') {
     return res.json({
       reviews: [
@@ -214,7 +376,6 @@ app.get('/api/reviews', async (req, res) => {
     });
   }
 
-  // Branch 2: SJ Business Solutions Unreplied Reviews
   if (locationId === 'loc_sj_solutions') {
     return res.json({
       reviews: [
@@ -230,7 +391,6 @@ app.get('/api/reviews', async (req, res) => {
     });
   }
 
-  // Aggregate "All Locations"
   res.json({
     reviews: [
       {
@@ -253,38 +413,36 @@ app.get('/api/reviews', async (req, res) => {
   });
 });
 
-// Dynamic AI Post Generator (Branch-Specific Context)
 app.post('/api/ai/post', async (req, res) => {
   const { businessName, topic } = req.body;
   const targetBusiness = businessName || 'SJbs.AI Business';
 
-  const prompt = `Write an engaging, high-converting Google Business Profile update post for "${targetBusiness}". Topic: "${topic || 'weekly services and customer satisfaction'}". Include local SEO tags, an engaging hook, and a call-to-action. Do not include preamble.`;
+  const prompt = `Write an engaging, high-converting Google Business Profile update post for "${targetBusiness}". Topic: "${topic || 'quality service and customer appreciation'}". Include local SEO tags, an engaging hook, and a call-to-action. Keep it concise. Do not include intro filler.`;
 
   try {
     const postContent = await generateGeminiAI(prompt);
-    const searchKeyword = encodeURIComponent(`${targetBusiness} professional service`);
+    const searchKeyword = encodeURIComponent(`${targetBusiness} service`);
     const imageUrl = `https://image.pollinations.ai/prompt/professional%20photo%20of%20${searchKeyword}?width=800&height=600&nologo=true`;
 
-    res.json({ postContent, imageUrl });
+    res.json({ postContent: postContent, imageUrl: imageUrl });
   } catch (err) {
-    console.error('AI Post Generation Error:', err.message);
+    console.error('AI Post Error:', err.message);
     res.status(500).json({ error: 'Failed to generate post.' });
   }
 });
 
-// Dynamic AI Review Reply Generator
 app.post('/api/ai/reply', async (req, res) => {
   const { reviewText, rating, reviewerName, businessName } = req.body;
   const targetBusiness = businessName || 'our business';
 
-  const prompt = `Write a friendly, customer-focused Google review response on behalf of "${targetBusiness}" to customer "${reviewerName || 'Customer'}" who gave a ${rating || 5}-star review saying: "${reviewText}". Keep it under 50 words and professional. Do not include introductory conversational filler.`;
+  const prompt = `Write a polite, warm Google review response on behalf of "${targetBusiness}" to customer "${reviewerName || 'Customer'}" who wrote: "${reviewText}". Keep it under 50 words, courteous, and professional. Do not include preamble.`;
 
   try {
-    const reply = await generateGeminiAI(prompt);
-    res.json({ reply });
+    const replyText = await generateGeminiAI(prompt);
+    res.json({ reply: replyText });
   } catch (err) {
     console.error('AI Reply Error:', err.message);
-    res.status(500).json({ error: 'Failed to generate response.' });
+    res.status(500).json({ error: 'Failed to generate reply.' });
   }
 });
 
