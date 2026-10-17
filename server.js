@@ -264,6 +264,22 @@ app.post('/api/ai/post', async (req, res) => {
   }
 });
 
+// Auth Logout Route - Destroys session and clears cookies
+app.get('/auth/logout', (req, res) => {
+  req.logout((err) => {
+    if (err) console.error('Logout error:', err);
+    if (req.session) {
+      req.session.destroy(() => {
+        res.clearCookie('connect.sid');
+        res.json({ success: true, message: 'Logged out successfully' });
+      });
+    } else {
+      res.clearCookie('connect.sid');
+      res.json({ success: true });
+    }
+  });
+});
+
 // Dynamic AI Review Reply Generator
 app.post('/api/ai/reply', async (req, res) => {
   const { reviewText, rating, reviewerName, businessName } = req.body;
