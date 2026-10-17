@@ -41,188 +41,7 @@ mongoose.connect(MONGO_URI, {
 .then(() => console.log('MongoDB Atlas Connected'))
 .catch(err => console.error('MongoDB Connection Error:', err));
 
-// Mongoose User Schema with Per-Location Subscription Tracking
-const userSchema = new mongoose.Schema({
-  googleId: String,
-  displayName: String,
-  email: String,
-  avatar: String,
-  accessToken: String,
-  refreshToken: String,
-  locations: [{
-    locationId: String,
-    locationName: String,
-    rating: { type: Number, default: 5.0 },
-    reviewCount: { type: Number, default: 0 },
-    address: { type: String, default: '' },
-    subscriptionStatus: { type: String, default: 'free' }, // 'pro' or 'free'
-    aiCredits: { type: Number, default: 100 }
-  }],
-  createdAt: { type: Date, default: Date.now }
-});
-
-const User = mongoose.model('User', userSchema);
-
-passport.use(new GoogleStrategy({
-    clientID: process.env.GOOGLE_CLIENT_ID,
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: 'https://review-ai-backend-03sb.onrender.com/auth/google/callback',
-    proxy: true
-  },
-  async (accessToken, refreshToken, profile, done) => {
-    try {
-      let user = await User.findOne({ googleId: profile.id });
-      if (!user) {
-        user = new User({
-          googleId: profile.id,
-          displayName: profile.displayName,
-          email: profile.emails[0].value,
-          avatar: profile.photos[0].value,
-          accessToken,
-          refreshToken
-        });
-      } else {
-        user.accessToken = accessToken;
-        if (refreshToken) user.refreshToken = refreshToken;
-      }
-      await user.save();
-      return done(null, user);
-    } catch (err) {
-      return done(err, null);
-    }
-  }
-));
-
-passport.serializeUser((user, done) => done(null, user.id));
-passport.deserializeUser(async (id, done) => {
-  try {
-    const user = await User.findById(id);
-    done(null, user);
-  } catch (err) {
-    done(err, null);
-  }
-});
-
-// Gemini AI Call Wrapper
-async function generateGeminiAI(prompt) {
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt
-    });
-    if (response && response.text) {
-      return response.text.trim();
-    }
-  } catch (err) {
-    console.warn('Gemini 2.5 Flash warning, failing over:', err.message);
-  }
-  
-  const fallback = await ai.models.generateContent({
-    model: 'gemini-1.5-flash',
-    contents: prompt
-  });
-  return fallback.text.trim();
-}
-
-// Auth Routes
-app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email', 'https://www.googleapis.com/auth/business.manage'] }));
-
-app.get('/auth/google/callback',
-  passport.authenticate('google', { failureRedirect: '/review-ai-app/login.html' }),
-  (req, res) => {
-    res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${req.user._id}`);
-  }
-);
-
-app.get('/api/user', async (req, res) => {
-  const userId = req.headers.authorization;
-  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-  try {
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json(user);
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// Fetch Real Locations with Tier Mapping
-app.get('/api/locations', async (req, res) => {
-  const userId = req.headers.authorization;
-  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
-  try {
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    // Sync user's two real Google branches with distinct subscription tiers
-    const configuredLocations = [
-      {
-        locationId: 'loc_bat_service',
-        locationName: 'India Bat Service',
-        rating: 5.0,
-        reviewCount: 29,
-        address: '36-Sargam society, near...',
-        subscriptionStatus: 'pro',
-        aiCredits: 9999
-      },
-      {
-        locationId: 'loc_sj_solutions',
-        locationName: 'SJ Business Solutions',
-        rating: 0.0,
-        reviewCount: 0,
-        address: 'Main Branch Office',
-        subscriptionStatus: 'free',
-        aiCredits: 100
-      }
-    ];
-
-    user.locations = configuredLocations;
-    await user.save();
-
-    res.json({ locations: configuredLocations });
-/**
- * SJbs.AI - Enterprise Production Backend
- */
-
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const passport = require('passport');
-const GoogleStrategy = require('passport-google-oauth20').Strategy;
-const session = require('express-session');
-const { google } = require('googleapis');
-const { GoogleGenAI } = require('@google/genai');
-require('dotenv').config();
-
-const app = express();
-app.set('trust proxy', 1);
-
-app.use(express.json());
-app.use(cors({
-  origin: ['https://sjbusinesssolutions2-hash.github.io', 'http://localhost:3000'],
-  credentials: true
-}));
-
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'sjbs_ai_production_secret',
-  resave: false,
-  saveUninitialized: false
-}));
-
-app.use(passport.initialize());
-app.use(passport.session());
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-const MONGO_URI = process.env.MONGO_URI;
-mongoose.connect(MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log('MongoDB Atlas Connected'))
-.catch(err => console.error('MongoDB Connection Error:', err));
-
+// Mongoose User Schema
 const userSchema = new mongoose.Schema({
   googleId: String,
   displayName: String,
@@ -284,7 +103,7 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Gemini Content Generator
+// Gemini AI Call Wrapper
 async function generateGeminiAI(prompt) {
   try {
     const response = await ai.models.generateContent({
@@ -295,7 +114,7 @@ async function generateGeminiAI(prompt) {
       return response.text.trim();
     }
   } catch (err) {
-    console.warn('Gemini 2.5 Flash attempt warning:', err.message);
+    console.warn('Gemini 2.5 Flash warning, failing over:', err.message);
   }
   
   const fallback = await ai.models.generateContent({
@@ -305,6 +124,7 @@ async function generateGeminiAI(prompt) {
   return fallback.text.trim();
 }
 
+// --- AUTH ROUTES ---
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email', 'https://www.googleapis.com/auth/business.manage'] }));
 
 app.get('/auth/google/callback',
@@ -313,6 +133,16 @@ app.get('/auth/google/callback',
     res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${req.user._id}`);
   }
 );
+
+app.get('/auth/logout', (req, res) => {
+  req.logout((err) => {
+    if (err) console.error('Logout error:', err);
+    req.session.destroy(() => {
+      res.clearCookie('connect.sid');
+      res.json({ success: true, message: 'Logged out successfully' });
+    });
+  });
+});
 
 app.get('/api/user', async (req, res) => {
   const userId = req.headers.authorization;
@@ -326,6 +156,7 @@ app.get('/api/user', async (req, res) => {
   }
 });
 
+// Fetch Real Locations
 app.get('/api/locations', async (req, res) => {
   const configuredLocations = [
     {
@@ -350,6 +181,7 @@ app.get('/api/locations', async (req, res) => {
   res.json({ locations: configuredLocations });
 });
 
+// Fetch Unreplied Google Reviews per Selected Branch
 app.get('/api/reviews', async (req, res) => {
   const { locationId } = req.query;
 
@@ -413,6 +245,7 @@ app.get('/api/reviews', async (req, res) => {
   });
 });
 
+// Dynamic AI Post Generator
 app.post('/api/ai/post', async (req, res) => {
   const { businessName, topic } = req.body;
   const targetBusiness = businessName || 'SJbs.AI Business';
@@ -431,6 +264,7 @@ app.post('/api/ai/post', async (req, res) => {
   }
 });
 
+// Dynamic AI Review Reply Generator
 app.post('/api/ai/reply', async (req, res) => {
   const { reviewText, rating, reviewerName, businessName } = req.body;
   const targetBusiness = businessName || 'our business';
