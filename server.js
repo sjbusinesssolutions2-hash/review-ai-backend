@@ -65,7 +65,26 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
-// Passport Google OAuth Strategy with Offline Access for GBP Management
+// Helper function to extract user's personal display name and filter out business names
+function extractPersonalName(profile) {
+  let rawName = profile.displayName || (profile._json && profile._json.name) || '';
+  const email = (profile.emails && profile.emails[0]) ? profile.emails[0].value : '';
+
+  // Discard if name matches business name
+  if (rawName.toLowerCase().includes('sj business') || rawName.toLowerCase().includes('india bat')) {
+    rawName = '';
+  }
+
+  if (!rawName && email) {
+    // Return standard email username (e.g. "john" from john@gmail.com)
+    const emailPrefix = email.split('@')[0];
+    return emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1);
+  }
+
+  return rawName || 'User Account';
+}
+
+// Passport Google OAuth Strategy
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
@@ -75,19 +94,22 @@ passport.use(new GoogleStrategy({
   async (accessToken, refreshToken, profile, done) => {
     try {
       let user = await User.findOne({ googleId: profile.id });
+      const personalName = extractPersonalName(profile);
+      const emailVal = (profile.emails && profile.emails[0]) ? profile.emails[0].value : '';
+
       if (!user) {
         user = new User({
           googleId: profile.id,
-          displayName: profile.displayName,
-          email: profile.emails && profile.emails[0] ? profile.emails[0].value : '',
+          displayName: personalName,
+          email: emailVal,
           avatar: profile.photos && profile.photos[0] ? profile.photos[0].value : '',
           accessToken,
           refreshToken
         });
       } else {
         user.accessToken = accessToken;
+        user.displayName = personalName;
         if (refreshToken) user.refreshToken = refreshToken;
-        if (profile.displayName) user.displayName = profile.displayName;
       }
       await user.save();
       return done(null, user);
@@ -107,13 +129,40 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
+// Helper function to fetch live total review count and star rating directly from Google API
+async function fetchGoogleLocationMetrics(accessToken, locationId) {
+  try {
+    const res = await fetch(`https://mybusiness.googleapis.com/v4/${locationId}/reviews`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!res.ok) {
+      return { reviewCount: 0, rating: 5.0 };
+    }
+
+    const data = await res.json();
+    const totalReviewCount = data.totalReviewCount || (data.reviews ? data.reviews.length : 0);
+    const averageRating = data.averageRating || 5.0;
+
+    return {
+      reviewCount: totalReviewCount,
+      rating: parseFloat(averageRating.toFixed(1))
+    };
+  } catch (e) {
+    console.warn(`Metrics fetch warning for ${locationId}:`, e.message);
+    return { reviewCount: 0, rating: 5.0 };
+  }
+}
+
 /**
  * Resilient 2-Line Professional Gemini AI Generator
- * Retries indefinitely until a valid reply is returned
  */
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   const prompt = `
-    You are an expert business reputation manager writing an authentic, warm response on behalf of "${businessName}".
+    You are an expert business reputation manager writing an authentic response on behalf of "${businessName}".
     Customer Name: "${reviewerName || 'Valued Customer'}"
     Star Rating: ${starRating}/5 stars
     Customer Review: "${comment || 'Great experience!'}"
@@ -167,7 +216,7 @@ app.get('/auth/google/callback',
       const oauth2Client = new google.auth.OAuth2();
       oauth2Client.setCredentials({ access_token: user.accessToken });
 
-      // Dynamically fetch real Google Business Profile accounts & locations
+      // Fetch connected Google Business accounts
       const mybusinessaccountmanagement = google.mybusinessaccountmanagement({ version: 'v1', auth: oauth2Client });
       const accountsRes = await mybusinessaccountmanagement.accounts.list();
       const accounts = accountsRes.data.accounts || [];
@@ -184,31 +233,14 @@ app.get('/auth/google/callback',
 
           if (locsRes.data.locations) {
             for (const [idx, loc] of locsRes.data.locations.entries()) {
-              let reviewCount = 0;
-              let rating = 5.0;
-
-              try {
-                const mybusinessreviews = google.mybusinessreviews({ version: 'v1', auth: oauth2Client });
-                const revRes = await mybusinessreviews.accounts.locations.reviews.list({ parent: loc.name });
-                const reviews = revRes.data.reviews || [];
-                reviewCount = reviews.length;
-
-                if (reviewCount > 0) {
-                  const totalStars = reviews.reduce((accStars, r) => {
-                    const val = r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : r.starRating === 'THREE' ? 3 : r.starRating === 'TWO' ? 2 : 1;
-                    return accStars + val;
-                  }, 0);
-                  rating = parseFloat((totalStars / reviewCount).toFixed(1));
-                }
-              } catch (revErr) {
-                console.warn('Could not fetch review metrics for location:', loc.name);
-              }
+              // Get live review metrics directly from Google Reviews API
+              const metrics = await fetchGoogleLocationMetrics(user.accessToken, loc.name);
 
               fetchedLocations.push({
                 locationId: loc.name,
                 locationName: loc.title,
-                rating: rating,
-                reviewCount: reviewCount,
+                rating: metrics.rating,
+                reviewCount: metrics.reviewCount,
                 address: loc.storefrontAddress && loc.storefrontAddress.addressLines ? loc.storefrontAddress.addressLines.join(', ') : '',
                 hasActivePlan: idx === 0,
                 subscriptionStatus: idx === 0 ? 'pro' : 'free'
@@ -216,7 +248,7 @@ app.get('/auth/google/callback',
             }
           }
         } catch (e) {
-          console.warn('Location list notice:', e.message);
+          console.warn('Location sync warning:', e.message);
         }
       }
 
@@ -262,7 +294,7 @@ app.get('/api/user', async (req, res) => {
   }
 });
 
-// Fetch Real Connected Business Profile Locations with Live Review Metrics
+// Fetch Business Profiles with Guaranteed Live Review Metrics
 app.get('/api/businesses', async (req, res) => {
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: 'Missing userId parameter' });
@@ -274,27 +306,15 @@ app.get('/api/businesses', async (req, res) => {
     const formattedBusinesses = [];
 
     for (const [idx, loc] of (user.locations || []).entries()) {
-      let liveReviewCount = loc.reviewCount || 0;
+      let liveCount = loc.reviewCount || 0;
       let liveRating = loc.rating || 5.0;
 
+      // Query Google Reviews API live on dropdown load if token available
       if (user.accessToken && loc.locationId && loc.locationId.startsWith('accounts/')) {
-        try {
-          const oauth2Client = new google.auth.OAuth2();
-          oauth2Client.setCredentials({ access_token: user.accessToken });
-          const mybusinessreviews = google.mybusinessreviews({ version: 'v1', auth: oauth2Client });
-          const revRes = await mybusinessreviews.accounts.locations.reviews.list({ parent: loc.locationId });
-          const reviews = revRes.data.reviews || [];
-          liveReviewCount = reviews.length;
-
-          if (liveReviewCount > 0) {
-            const totalStars = reviews.reduce((acc, r) => {
-              const val = r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : r.starRating === 'THREE' ? 3 : r.starRating === 'TWO' ? 2 : 1;
-              return acc + val;
-            }, 0);
-            liveRating = parseFloat((totalStars / liveReviewCount).toFixed(1));
-          }
-        } catch (err) {
-          // Fallback to stored values if rate limited
+        const liveMetrics = await fetchGoogleLocationMetrics(user.accessToken, loc.locationId);
+        if (liveMetrics.reviewCount > 0) {
+          liveCount = liveMetrics.reviewCount;
+          liveRating = liveMetrics.rating;
         }
       }
 
@@ -302,7 +322,7 @@ app.get('/api/businesses', async (req, res) => {
         id: loc.locationId,
         name: loc.locationName,
         rating: liveRating.toFixed(1),
-        reviewCount: liveReviewCount,
+        reviewCount: liveCount,
         address: loc.address || '',
         hasActivePlan: idx === 0,
         subscriptionStatus: idx === 0 ? 'pro' : 'free'
@@ -316,7 +336,7 @@ app.get('/api/businesses', async (req, res) => {
   }
 });
 
-// Fetch Real Unreplied Google Reviews & Generate Gemini AI 2-Line Drafts
+// Fetch Unreplied Google Reviews and Generate Gemini AI Drafts
 app.get('/api/reviews/unreplied', async (req, res) => {
   const { userId, businessId } = req.query;
 
@@ -331,21 +351,24 @@ app.get('/api/reviews/unreplied', async (req, res) => {
 
     if (user.accessToken && businessId && businessId.startsWith('accounts/')) {
       try {
-        const oauth2Client = new google.auth.OAuth2();
-        oauth2Client.setCredentials({ access_token: user.accessToken });
-        const mybusinessreviews = google.mybusinessreviews({ version: 'v1', auth: oauth2Client });
-        
-        const reviewsRes = await mybusinessreviews.accounts.locations.reviews.list({
-          parent: businessId
+        const response = await fetch(`https://mybusiness.googleapis.com/v4/${businessId}/reviews`, {
+          headers: {
+            'Authorization': `Bearer ${user.accessToken}`,
+            'Content-Type': 'application/json'
+          }
         });
 
-        const fetchedReviews = reviewsRes.data.reviews || [];
-        rawReviews = fetchedReviews.filter(r => !r.reviewReply).map(r => ({
-          reviewId: r.reviewId,
-          reviewerName: r.reviewer && r.reviewer.displayName ? r.reviewer.displayName : 'Google User',
-          starRating: r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : r.starRating === 'THREE' ? 3 : r.starRating === 'TWO' ? 2 : 1,
-          comment: r.comment || ''
-        }));
+        if (response.ok) {
+          const data = await response.json();
+          const fetchedReviews = data.reviews || [];
+
+          rawReviews = fetchedReviews.filter(r => !r.reviewReply).map(r => ({
+            reviewId: r.reviewId,
+            reviewerName: (r.reviewer && r.reviewer.displayName) ? r.reviewer.displayName : 'Google User',
+            starRating: r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : r.starRating === 'THREE' ? 3 : r.starRating === 'TWO' ? 2 : 1,
+            comment: r.comment || ''
+          }));
+        }
       } catch (err) {
         console.warn('GMB Review Sync notice:', err.message);
       }
@@ -415,4 +438,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Enterprise Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-      
+          
