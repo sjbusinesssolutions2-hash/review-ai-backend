@@ -183,17 +183,38 @@ app.get('/auth/google/callback',
           });
 
           if (locsRes.data.locations) {
-            locsRes.data.locations.forEach((loc, idx) => {
+            for (const [idx, loc] of locsRes.data.locations.entries()) {
+              let reviewCount = 0;
+              let rating = 5.0;
+
+              // Fetch actual live reviews to compute accurate review counts and star ratings
+              try {
+                const mybusinessreviews = google.mybusinessreviews({ version: 'v1', auth: oauth2Client });
+                const revRes = await mybusinessreviews.accounts.locations.reviews.list({ parent: loc.name });
+                const reviews = revRes.data.reviews || [];
+                reviewCount = reviews.length;
+
+                if (reviewCount > 0) {
+                  const totalStars = reviews.reduce((accStars, r) => {
+                    const val = r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : r.starRating === 'THREE' ? 3 : r.starRating === 'TWO' ? 2 : 1;
+                    return accStars + val;
+                  }, 0);
+                  rating = parseFloat((totalStars / reviewCount).toFixed(1));
+                }
+              } catch (revErr) {
+                console.warn('Could not fetch review metrics for location:', loc.name);
+              }
+
               fetchedLocations.push({
                 locationId: loc.name,
                 locationName: loc.title,
-                rating: 5.0,
-                reviewCount: 0,
+                rating: rating,
+                reviewCount: reviewCount,
                 address: loc.storefrontAddress && loc.storefrontAddress.addressLines ? loc.storefrontAddress.addressLines.join(', ') : '',
                 hasActivePlan: idx === 0,
                 subscriptionStatus: idx === 0 ? 'pro' : 'free'
               });
-            });
+            }
           }
         } catch (e) {
           console.warn('Location list notice:', e.message);
@@ -296,7 +317,7 @@ app.get('/api/reviews/unreplied', async (req, res) => {
         rawReviews = fetchedReviews.filter(r => !r.reviewReply).map(r => ({
           reviewId: r.reviewId,
           reviewerName: r.reviewer && r.reviewer.displayName ? r.reviewer.displayName : 'Google User',
-          starRating: r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : r.starRating === 'THREE' ? 3 : 5,
+          starRating: r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : r.starRating === 'THREE' ? 3 : r.starRating === 'TWO' ? 2 : 1,
           comment: r.comment || ''
         }));
       } catch (err) {
@@ -369,4 +390,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Enterprise Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-                        
+        
