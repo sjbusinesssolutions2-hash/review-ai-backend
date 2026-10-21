@@ -79,14 +79,15 @@ passport.use(new GoogleStrategy({
         user = new User({
           googleId: profile.id,
           displayName: profile.displayName,
-          email: profile.emails[0].value,
-          avatar: profile.photos[0].value,
+          email: profile.emails && profile.emails[0] ? profile.emails[0].value : '',
+          avatar: profile.photos && profile.photos[0] ? profile.photos[0].value : '',
           accessToken,
           refreshToken
         });
       } else {
         user.accessToken = accessToken;
         if (refreshToken) user.refreshToken = refreshToken;
+        if (profile.displayName) user.displayName = profile.displayName;
       }
       await user.save();
       return done(null, user);
@@ -158,7 +159,6 @@ app.get('/auth/google', passport.authenticate('google', {
   prompt: 'consent'
 }));
 
-// Updated Google OAuth Callback
 app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: 'https://sjbusinesssolutions2-hash.github.io/review-ai-app/login.html' }),
   async (req, res) => {
@@ -167,7 +167,7 @@ app.get('/auth/google/callback',
       const oauth2Client = new google.auth.OAuth2();
       oauth2Client.setCredentials({ access_token: user.accessToken });
 
-      // Fetch Real Google Business Profile Accounts & Locations
+      // Dynamically fetch real Google Business Profile accounts & locations
       const mybusinessaccountmanagement = google.mybusinessaccountmanagement({ version: 'v1', auth: oauth2Client });
       const accountsRes = await mybusinessaccountmanagement.accounts.list();
       const accounts = accountsRes.data.accounts || [];
@@ -189,57 +189,30 @@ app.get('/auth/google/callback',
                 locationName: loc.title,
                 rating: 5.0,
                 reviewCount: 0,
-                address: loc.storefrontAddress ? (loc.storefrontAddress.addressLines || []).join(', ') : '',
+                address: loc.storefrontAddress && loc.storefrontAddress.addressLines ? loc.storefrontAddress.addressLines.join(', ') : '',
                 hasActivePlan: idx === 0,
                 subscriptionStatus: idx === 0 ? 'pro' : 'free'
               });
             });
           }
         } catch (e) {
-          console.warn('Location list notice for account:', acc.name, e.message);
+          console.warn('Location list notice:', e.message);
         }
       }
 
-      if (fetchedLocations.length > 0) {
-        user.locations = fetchedLocations;
-        await user.save();
-      }
+      user.locations = fetchedLocations;
+      await user.save();
 
-      const userName = encodeURIComponent(user.displayName || '');
+      const userName = encodeURIComponent(user.displayName || 'User');
       const userEmail = encodeURIComponent(user.email || '');
 
       res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${user._id}&userName=${userName}&userEmail=${userEmail}`);
     } catch (err) {
       console.error('OAuth Callback Error:', err);
-      res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${req.user._id}&userName=${encodeURIComponent(req.user.displayName)}`);
+      res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${req.user._id}&userName=${encodeURIComponent(req.user.displayName || 'User')}`);
     }
   }
 );
-
-// Updated Dynamic Business Fetch Route
-app.get('/api/businesses', async (req, res) => {
-  const { userId } = req.query;
-  if (!userId) return res.status(400).json({ error: 'Missing userId parameter' });
-
-  try {
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const formattedBusinesses = (user.locations || []).map(loc => ({
-      id: loc.locationId,
-      name: loc.locationName,
-      rating: loc.rating ? loc.rating.toFixed(1) : '5.0',
-      reviewCount: loc.reviewCount || 0,
-      address: loc.address || '',
-      hasActivePlan: loc.hasActivePlan || false,
-      subscriptionStatus: loc.subscriptionStatus || 'free'
-    }));
-
-    res.json(formattedBusinesses);
-  } catch (err) {
-    res.status(500).json({ error: 'Server error fetching businesses' });
-  }
-});
 
 app.get('/auth/logout', (req, res) => {
   req.logout((err) => {
@@ -269,91 +242,23 @@ app.get('/api/user', async (req, res) => {
   }
 });
 
-// Fetch Connected Business Profile Locations for Selected User
+// Fetch Real Connected Business Profile Locations (Zero Hardcoding)
 app.get('/api/businesses', async (req, res) => {
   const { userId } = req.query;
-  
-  if (!userId) {
-    return res.status(400).json({ error: 'Missing userId parameter' });
-  }
+  if (!userId) return res.status(400).json({ error: 'Missing userId parameter' });
 
   try {
     const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
-    // Try live sync via Google My Business API if accessToken exists
-    if (user.accessToken) {
-      try {
-        const oauth2Client = new google.auth.OAuth2();
-        oauth2Client.setCredentials({ access_token: user.accessToken });
-        const mybusinessaccountmanagement = google.mybusinessaccountmanagement({ version: 'v1', auth: oauth2Client });
-        
-        const accountsRes = await mybusinessaccountmanagement.accounts.list();
-        const accounts = accountsRes.data.accounts || [];
-
-        if (accounts.length > 0) {
-          const accountName = accounts[0].name;
-          const mybusinessbusinessinformation = google.mybusinessbusinessinformation({ version: 'v1', auth: oauth2Client });
-          const locationsRes = await mybusinessbusinessinformation.accounts.locations.list({
-            parent: accountName,
-            readMask: 'name,title,storefrontAddress'
-          });
-
-          const liveLocations = locationsRes.data.locations || [];
-          if (liveLocations.length > 0) {
-            user.locations = liveLocations.map((loc, idx) => ({
-              locationId: loc.name,
-              locationName: loc.title,
-              rating: 5.0,
-              reviewCount: 0,
-              address: loc.storefrontAddress ? loc.storefrontAddress.addressLines.join(', ') : '',
-              hasActivePlan: idx === 0 ? true : false, // First branch active demo
-              subscriptionStatus: idx === 0 ? 'pro' : 'free'
-            }));
-            await user.save();
-          }
-        }
-      } catch (gbpErr) {
-        console.warn('GMB Live API Sync notice:', gbpErr.message);
-      }
-    }
-
-    // Fallback/Default configuration if GMB profile has no registered locations
-    if (!user.locations || user.locations.length === 0) {
-      user.locations = [
-        {
-          locationId: 'loc_bat_service',
-          locationName: 'India Bat Service',
-          rating: 5.0,
-          reviewCount: 29,
-          address: '36-Sargam society, near...',
-          hasActivePlan: true,
-          subscriptionStatus: 'pro'
-        },
-        {
-          locationId: 'loc_sj_solutions',
-          locationName: 'SJ Business Solutions',
-          rating: 0.0,
-          reviewCount: 0,
-          address: 'Main Branch Office',
-          hasActivePlan: false,
-          subscriptionStatus: 'free'
-        }
-      ];
-      await user.save();
-    }
-
-    // Format response array for frontend Navigation script
-    const formattedBusinesses = user.locations.map(loc => ({
+    const formattedBusinesses = (user.locations || []).map(loc => ({
       id: loc.locationId,
       name: loc.locationName,
-      rating: loc.rating.toFixed(1),
-      reviewCount: loc.reviewCount,
-      address: loc.address,
-      hasActivePlan: loc.hasActivePlan,
-      subscriptionStatus: loc.subscriptionStatus
+      rating: loc.rating ? loc.rating.toFixed(1) : '5.0',
+      reviewCount: loc.reviewCount || 0,
+      address: loc.address || '',
+      hasActivePlan: loc.hasActivePlan || false,
+      subscriptionStatus: loc.subscriptionStatus || 'free'
     }));
 
     res.json(formattedBusinesses);
@@ -369,14 +274,15 @@ app.get('/api/reviews/unreplied', async (req, res) => {
 
   try {
     const user = await User.findById(userId);
-    const targetBusinessName = (user && user.locations) 
-      ? (user.locations.find(l => l.locationId === businessId)?.locationName || 'Our Business')
-      : 'Our Business';
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const targetLocation = (user.locations || []).find(l => l.locationId === businessId);
+    const targetBusinessName = targetLocation ? targetLocation.locationName : 'Our Business';
 
     let rawReviews = [];
 
-    // Attempt Live Google Business Profile Review Sync
-    if (user && user.accessToken && businessId.startsWith('accounts/')) {
+    // Attempt Live Google Business Profile Review Sync via API
+    if (user.accessToken && businessId && businessId.startsWith('accounts/')) {
       try {
         const oauth2Client = new google.auth.OAuth2();
         oauth2Client.setCredentials({ access_token: user.accessToken });
@@ -389,34 +295,12 @@ app.get('/api/reviews/unreplied', async (req, res) => {
         const fetchedReviews = reviewsRes.data.reviews || [];
         rawReviews = fetchedReviews.filter(r => !r.reviewReply).map(r => ({
           reviewId: r.reviewId,
-          reviewerName: r.reviewer.displayName,
-          starRating: r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : 3,
+          reviewerName: r.reviewer && r.reviewer.displayName ? r.reviewer.displayName : 'Google User',
+          starRating: r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : r.starRating === 'THREE' ? 3 : 5,
           comment: r.comment || ''
         }));
       } catch (err) {
-        console.warn('GMB Review Sync notice, using stored branch reviews.');
-      }
-    }
-
-    // Default branch reviews if live API yields no pending items
-    if (rawReviews.length === 0) {
-      if (businessId === 'loc_bat_service') {
-        rawReviews = [
-          {
-            reviewId: 'rev_bat_101',
-            reviewerName: 'Jafar Diwan',
-            starRating: 5,
-            comment: 'Great service'
-          },
-          {
-            reviewId: 'rev_bat_102',
-            reviewerName: 'Sohil Malek',
-            starRating: 5,
-            comment: 'Great bat repairing service.'
-          }
-        ];
-      } else if (businessId === 'loc_sj_solutions') {
-        rawReviews = []; // Empty state for this branch
+        console.warn('GMB Review Sync notice:', err.message);
       }
     }
 
@@ -485,3 +369,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Enterprise Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+                        
