@@ -161,8 +161,9 @@ app.get('/auth/google', passport.authenticate('google', {
 app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: 'https://sjbusinesssolutions2-hash.github.io/review-ai-app/login.html' }),
   (req, res) => {
-    const userName = encodeURIComponent(req.user.displayName || 'User');
+    const userName = encodeURIComponent(req.user.displayName || 'User Name');
     const userEmail = encodeURIComponent(req.user.email || '');
+    // Encodes display name so frontend receives exact initials
     res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${req.user._id}&userName=${userName}&userEmail=${userEmail}`);
   }
 );
