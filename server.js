@@ -158,15 +158,88 @@ app.get('/auth/google', passport.authenticate('google', {
   prompt: 'consent'
 }));
 
+// Updated Google OAuth Callback
 app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: 'https://sjbusinesssolutions2-hash.github.io/review-ai-app/login.html' }),
-  (req, res) => {
-    const userName = encodeURIComponent(req.user.displayName || 'User Name');
-    const userEmail = encodeURIComponent(req.user.email || '');
-    // Encodes display name so frontend receives exact initials
-    res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${req.user._id}&userName=${userName}&userEmail=${userEmail}`);
+  async (req, res) => {
+    try {
+      const user = req.user;
+      const oauth2Client = new google.auth.OAuth2();
+      oauth2Client.setCredentials({ access_token: user.accessToken });
+
+      // Fetch Real Google Business Profile Accounts & Locations
+      const mybusinessaccountmanagement = google.mybusinessaccountmanagement({ version: 'v1', auth: oauth2Client });
+      const accountsRes = await mybusinessaccountmanagement.accounts.list();
+      const accounts = accountsRes.data.accounts || [];
+
+      let fetchedLocations = [];
+
+      for (const acc of accounts) {
+        try {
+          const mybusinessinfo = google.mybusinessbusinessinformation({ version: 'v1', auth: oauth2Client });
+          const locsRes = await mybusinessinfo.accounts.locations.list({
+            parent: acc.name,
+            readMask: 'name,title,storefrontAddress'
+          });
+
+          if (locsRes.data.locations) {
+            locsRes.data.locations.forEach((loc, idx) => {
+              fetchedLocations.push({
+                locationId: loc.name,
+                locationName: loc.title,
+                rating: 5.0,
+                reviewCount: 0,
+                address: loc.storefrontAddress ? (loc.storefrontAddress.addressLines || []).join(', ') : '',
+                hasActivePlan: idx === 0,
+                subscriptionStatus: idx === 0 ? 'pro' : 'free'
+              });
+            });
+          }
+        } catch (e) {
+          console.warn('Location list notice for account:', acc.name, e.message);
+        }
+      }
+
+      if (fetchedLocations.length > 0) {
+        user.locations = fetchedLocations;
+        await user.save();
+      }
+
+      const userName = encodeURIComponent(user.displayName || '');
+      const userEmail = encodeURIComponent(user.email || '');
+
+      res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${user._id}&userName=${userName}&userEmail=${userEmail}`);
+    } catch (err) {
+      console.error('OAuth Callback Error:', err);
+      res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${req.user._id}&userName=${encodeURIComponent(req.user.displayName)}`);
+    }
   }
 );
+
+// Updated Dynamic Business Fetch Route
+app.get('/api/businesses', async (req, res) => {
+  const { userId } = req.query;
+  if (!userId) return res.status(400).json({ error: 'Missing userId parameter' });
+
+  try {
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const formattedBusinesses = (user.locations || []).map(loc => ({
+      id: loc.locationId,
+      name: loc.locationName,
+      rating: loc.rating ? loc.rating.toFixed(1) : '5.0',
+      reviewCount: loc.reviewCount || 0,
+      address: loc.address || '',
+      hasActivePlan: loc.hasActivePlan || false,
+      subscriptionStatus: loc.subscriptionStatus || 'free'
+    }));
+
+    res.json(formattedBusinesses);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error fetching businesses' });
+  }
+});
 
 app.get('/auth/logout', (req, res) => {
   req.logout((err) => {
