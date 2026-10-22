@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Multi-Location GBP Sync, Multi-Key AQ. Gemini Engine, and Mongo Sessions
+ * Multi-Location GBP Sync, Multi-Key AQ. Gemini Engine
  */
 
 const express = require('express');
@@ -16,31 +16,24 @@ require('dotenv').config();
 const app = express();
 app.set('trust proxy', 1);
 
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'sjbs_ai_production_secret',
-  resave: false,
-  saveUninitialized: false
+app.use(express.json());
+app.use(cors({
+  origin: ['https://sjbusinesssolutions2-hash.github.io', 'http://localhost:3000'],
+  credentials: true
 }));
 
 const MONGO_URI = process.env.MONGO_URI;
 
-// Cleaned MongoDB Connection (removes deprecation warnings)
+// Cleaned MongoDB Connection
 mongoose.connect(MONGO_URI)
   .then(() => console.log('MongoDB Atlas Connected'))
   .catch(err => console.error('MongoDB Connection Error:', err));
 
-// Production Session Store in MongoDB (removes MemoryStore warning)
+// Production-ready session configuration
 app.use(session({
   secret: process.env.SESSION_SECRET || 'sjbs_ai_production_secret',
   resave: false,
-  saveUninitialized: false,
-  store: MongoStore.create({
-    mongoUrl: MONGO_URI,
-    collectionName: 'sessions'
-  }),
-  cookie: {
-    maxAge: 1000 * 60 * 60 * 24 * 7 // 7 days session persistence
-  }
+  saveUninitialized: false
 }));
 
 app.use(passport.initialize());
@@ -563,3 +556,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+        
