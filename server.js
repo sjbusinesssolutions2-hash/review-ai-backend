@@ -337,7 +337,7 @@ app.get('/api/businesses', async (req, res) => {
   }
 });
 
-// Fetch All Google Reviews with Tab Metrics
+// Fetch All Google Reviews with Dynamic Account Discovery & Tab Metrics
 app.get('/api/reviews/all', async (req, res) => {
   const { userId, businessId } = req.query;
 
@@ -347,41 +347,77 @@ app.get('/api/reviews/all', async (req, res) => {
 
   try {
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!user || !user.accessToken) {
+      return.status(401).json({ error: 'User or access token not found' });
+    }
 
     const targetLocation = (user.locations || []).find(l => l.locationId === businessId);
     const targetBusinessName = targetLocation ? targetLocation.locationName : 'Our Business';
-    const parentPath = targetLocation && targetLocation.accountLocationPath ? targetLocation.accountLocationPath : businessId;
 
     let rawReviews = [];
+    let parentPath = targetLocation && targetLocation.accountLocationPath ? targetLocation.accountLocationPath : null;
 
-    if (user.accessToken && parentPath) {
+    // If accountLocationPath is missing, dynamically discover it from Google API
+    if (!parentPath) {
       try {
-        const response = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
-          headers: {
-            'Authorization': `Bearer ${user.accessToken}`,
-            'Content-Type': 'application/json'
-          }
+        const accountsRes = await fetch('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', {
+          headers: { 'Authorization': `Bearer ${user.accessToken}` }
         });
-
-        if (response.ok) {
-          const data = await response.json();
-          const fetchedReviews = data.reviews || [];
-
-          rawReviews = fetchedReviews.map(r => ({
-            reviewId: r.reviewId,
-            reviewerName: (r.reviewer && r.reviewer.displayName) ? r.reviewer.displayName : 'Google User',
-            starRating: r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : r.starRating === 'THREE' ? 3 : r.starRating === 'TWO' ? 2 : 1,
-            comment: r.comment || '',
-            reply: r.reviewReply ? r.reviewReply.comment : null,
-            updateTime: r.updateTime || ''
-          }));
+        if (accountsRes.ok) {
+          const accountsData = await accountsRes.json();
+          const accounts = accountsData.accounts || [];
+          
+          for (const acc of accounts) {
+            const locsRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${acc.name}/locations`, {
+              headers: { 'Authorization': `Bearer ${user.accessToken}` }
+            });
+            if (locsRes.ok) {
+              const locsData = await locsRes.json();
+              const match = (locsData.locations || []).find(l => l.name.includes(businessId));
+              if (match) {
+                parentPath = match.name; // e.g. accounts/123/locations/456
+                break;
+              }
+            }
+          }
         }
-      } catch (err) {
-        console.warn('All reviews fetch notice:', err.message);
+      } catch (discErr) {
+        console.warn('Dynamic location discovery notice:', discErr.message);
       }
     }
 
+    // Fallback path format if discovery didn't find a custom match
+    if (!parentPath) {
+      parentPath = `locations/${businessId}`;
+    }
+
+    // Fetch reviews from Google
+    try {
+      const response = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
+        headers: {
+          'Authorization': `Bearer ${user.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const fetchedReviews = data.reviews || [];
+
+        rawReviews = fetchedReviews.map(r => ({
+          reviewId: r.reviewId,
+          reviewerName: (r.reviewer && r.reviewer.displayName) ? r.reviewer.displayName : 'Google User',
+          starRating: r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : r.starRating === 'THREE' ? 3 : r.starRating === 'TWO' ? 2 : 1,
+          comment: r.comment || '',
+          reply: r.reviewReply ? r.reviewReply.comment : null,
+          updateTime: r.updateTime || ''
+        }));
+      }
+    } catch (err) {
+      console.warn('Reviews API fetch notice:', err.message);
+    }
+
+    // Process Gemini AI drafts for unreplied items
     const processedReviews = await Promise.all(
       rawReviews.map(async (item) => {
         let aiDraftReply = '';
@@ -416,6 +452,7 @@ app.get('/api/reviews/all', async (req, res) => {
     res.status(500).json({ error: 'Server error fetching reviews' });
   }
 });
+
 
 // Fetch Unreplied Google Reviews & Generate Gemini AI Drafts
 app.get('/api/reviews/unreplied', async (req, res) => {
