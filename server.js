@@ -138,6 +138,7 @@ passport.deserializeUser(async (id, done) => {
 });
 
 // Resilient Multi-Key Rotation AI Engine
+// High-Speed Concurrent Multi-Key Race Engine
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   if (geminiKeys.length === 0) return null;
 
@@ -156,14 +157,10 @@ Instructions:
 3. Do NOT follow a fixed formula or template. Speak like a genuine person writing a unique message on the spot, referencing specific details from their review.
 4. Avoid repetitive sign-offs, quotes, or preambles.`;
 
-  let attempts = 0;
-  const maxAttempts = Math.min(geminiKeys.length * 2, 6);
-
-  while (attempts < maxAttempts) {
-    const aiClient = getNextGeminiClient();
-    if (!aiClient) break;
-
+  // Fire requests to all keys simultaneously, take the first successful response
+  const promises = geminiKeys.map(async (key) => {
     try {
+      const aiClient = new GoogleGenAI({ apiKey: key });
       const response = await aiClient.models.generateContent({
         model: 'gemini-3.8-flash',
         contents: prompt
@@ -188,15 +185,22 @@ Instructions:
         return cleanText;
       }
     } catch (err) {
-      console.warn(`Gemini API Key Rotation Warning (Attempt ${attempts + 1}):`, err.message);
+      // Ignore individual failures in a race condition
+      return null;
     }
+    return null;
+  });
 
-    attempts++;
-    await new Promise(r => setTimeout(r, 600));
+  try {
+    // Promise.any returns the first successfully resolved promise
+    const result = await Promise.any(promises);
+    return result;
+  } catch (aggregateErr) {
+    console.error('All concurrent Gemini keys failed or hit rate limits.');
+    return null;
   }
-
-  return null;
 }
+
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
   try {
