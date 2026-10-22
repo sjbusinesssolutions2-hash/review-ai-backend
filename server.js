@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Multi-Location GBP Sync, Strict Gemini AI Task Engine
+ * Multi-Location GBP Sync, Gemini 3.8 Flash Task Engine
  */
 
 const express = require('express');
@@ -120,36 +120,36 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Strictly Dynamic Gemini Generator using gemini-2.5-flash
+// Gemini AI Call with gemini-3.8-flash
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'valued customer';
 
-  const prompt = `You are the owner of "${businessName}". Write an authentic, highly personalized 2-sentence response to ${cleanName} who left a${starRating}-star review: "${cleanComment}".
+  const prompt = `You are the owner of "${businessName}". Write an authentic, highly personalized 2-sentence response to ${cleanName} who left a ${starRating}-star review: "${cleanComment}".
 
 STRICT RULES:
 1. You MUST explicitly reference specific words or details from their review comment (e.g. equipment, repair work, staff, bat repairs, etc.).
 2. Write EXACTLY 2 natural sentences. Sentence 1 thanks them and references their specific review details. Sentence 2 reaffirms commitment and invites them back.
 3. NEVER return template or placeholder phrases. No preambles, quotation marks, or signature lines.`;
 
-  while (true) {
+  let attempts = 0;
+  while (attempts < 10) {
     try {
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.8-flash',
         contents: prompt
       });
 
       if (response && response.text && response.text.trim().length > 0) {
-        const resultText = response.text.trim();
-        if (!resultText.includes("taking the time to share your feedback")) {
-          return resultText;
-        }
+        return response.text.trim();
       }
     } catch (err) {
-      console.warn('Gemini AI temporary network notice, retrying instantly:', err.message);
+      console.warn(`Gemini AI Attempt ${attempts + 1} notice:`, err.message);
     }
+    attempts++;
     await new Promise(r => setTimeout(r, 600));
   }
+  return '';
 }
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
@@ -401,11 +401,13 @@ app.get('/api/reviews/all', async (req, res) => {
             item.comment
           );
 
-          user.savedDrafts.push({
-            reviewId: item.reviewId,
-            draftText: aiDraftReply
-          });
-          userModified = true;
+          if (aiDraftReply) {
+            user.savedDrafts.push({
+              reviewId: item.reviewId,
+              draftText: aiDraftReply
+            });
+            userModified = true;
+          }
         }
       }
 
@@ -420,7 +422,7 @@ app.get('/api/reviews/all', async (req, res) => {
     }
 
     const needsReplyCount = processedReviews.filter(r => !r.reply).length;
-    constrepliedCount = processedReviews.filter(r => r.reply).length;
+    const repliedCount = processedReviews.filter(r => r.reply).length;
 
     res.json({
       reviews: processedReviews,
@@ -507,3 +509,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+      
