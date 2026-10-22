@@ -348,7 +348,7 @@ app.get('/api/reviews/all', async (req, res) => {
   try {
     const user = await User.findById(userId);
     if (!user || !user.accessToken) {
-      return.status(401).json({ error: 'User or access token not found' });
+      return res.status(401).json({ error: 'User or access token not found' });
     }
 
     const targetLocation = (user.locations || []).find(l => l.locationId === businessId);
@@ -357,7 +357,6 @@ app.get('/api/reviews/all', async (req, res) => {
     let rawReviews = [];
     let parentPath = targetLocation && targetLocation.accountLocationPath ? targetLocation.accountLocationPath : null;
 
-    // If accountLocationPath is missing, dynamically discover it from Google API
     if (!parentPath) {
       try {
         const accountsRes = await fetch('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', {
@@ -375,7 +374,7 @@ app.get('/api/reviews/all', async (req, res) => {
               const locsData = await locsRes.json();
               const match = (locsData.locations || []).find(l => l.name.includes(businessId));
               if (match) {
-                parentPath = match.name; // e.g. accounts/123/locations/456
+                parentPath = match.name;
                 break;
               }
             }
@@ -386,12 +385,10 @@ app.get('/api/reviews/all', async (req, res) => {
       }
     }
 
-    // Fallback path format if discovery didn't find a custom match
     if (!parentPath) {
       parentPath = `locations/${businessId}`;
     }
 
-    // Fetch reviews from Google
     try {
       const response = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
         headers: {
@@ -417,7 +414,6 @@ app.get('/api/reviews/all', async (req, res) => {
       console.warn('Reviews API fetch notice:', err.message);
     }
 
-    // Process Gemini AI drafts for unreplied items
     const processedReviews = await Promise.all(
       rawReviews.map(async (item) => {
         let aiDraftReply = '';
@@ -453,7 +449,6 @@ app.get('/api/reviews/all', async (req, res) => {
   }
 });
 
-
 // Fetch Unreplied Google Reviews & Generate Gemini AI Drafts
 app.get('/api/reviews/unreplied', async (req, res) => {
   const { userId, businessId } = req.query;
@@ -470,15 +465,15 @@ app.get('/api/reviews/unreplied', async (req, res) => {
 
     if (user.accessToken && parentPath) {
       try {
-        const res = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
+        const response = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
           headers: {
             'Authorization': `Bearer ${user.accessToken}`,
             'Content-Type': 'application/json'
           }
         });
 
-        if (res.ok) {
-          const data = await res.json();
+        if (response.ok) {
+          const data = await response.json();
           const fetchedReviews = data.reviews || [];
           rawReviews = fetchedReviews.filter(r => !r.reviewReply).map(r => ({
             reviewId: r.reviewId,
@@ -557,4 +552,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Enterprise Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-            
+      
