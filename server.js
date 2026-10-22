@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Enterprise Multi-Location GBP Sync, Gemini AI Replies, Free Tier Quota Engine
+ * Enterprise Multi-Location GBP Sync, Authentic Gemini AI Replies, Free Tier Quota Engine
  */
 
 const express = require('express');
@@ -51,9 +51,7 @@ const userSchema = new mongoose.Schema({
   avatar: String,
   accessToken: String,
   refreshToken: String,
-  // Tracks used free AI draft review IDs so they never repeat
   usedFreeDraftReviewIds: { type: [String], default: [] },
-  // Saved AI drafts per review: { reviewId: string, draftText: string }
   savedDrafts: [{
     reviewId: String,
     draftText: String
@@ -73,7 +71,7 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
-// Helper: Extract real personal name strictly from Google profile payload
+// Extract real personal name strictly from Google profile payload
 function extractPersonalName(profile) {
   if (profile._json && profile._json.given_name) {
     const family = profile._json.family_name ? ` ${profile._json.family_name}` : '';
@@ -127,20 +125,19 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// 100% Authentic 2-Line AI Generator (Zero Hardcoded Templates)
+// 100% Authentic 2-Line Gemini AI Generator (Zero Generic Hardcoding)
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'valued customer';
 
   const prompt = `You are the business owner of "${businessName}".
-Write an authentic, personalized 2-sentence response to ${cleanName} who left a ${starRating}-star review saying: "${cleanComment}".
+Write an authentic, highly personalized 2-sentence response to ${cleanName} who left a ${starRating}-star review saying: "${cleanComment}".
 
-STRICT RULES:
-1. You MUST reference specific details or context from their review comment (e.g. equipment, speed, quality, staff, etc.).
-2. Write EXACTLY 2 natural sentences. Line 1 thanks them and references their specific review details. Line 2 reaffirms your quality commitment and invites them back.
-3. NEVER return template or placeholder phrases. No preambles, quotation marks, or signatures.`;
+CRITICAL INSTRUCTIONS:
+1. You MUST explicitly reference specific words or details from their review comment (e.g., equipment, repair work, staff, or service details mentioned).
+2. Write EXACTLY 2 natural sentences. Sentence 1 thanks them and references their specific review details. Sentence 2 reaffirms commitment and invites them back.
+3. NEVER return template or placeholder phrases. No preambles, quotation marks, or signature lines.`;
 
-  // Persistent retry loop: Keeps requesting Gemini until an authentic reply is generated
   while (true) {
     try {
       const response = await ai.models.generateContent({
@@ -152,32 +149,13 @@ STRICT RULES:
         return response.text.trim();
       }
     } catch (err) {
-      console.warn('Gemini generation retry:', err.message);
+      console.warn('Gemini AI generation retry:', err.message);
       await new Promise(r => setTimeout(r, 800));
     }
   }
 }
 
-
-// Route to clear stale saved drafts for testing/reset
-app.post('/api/reviews/clear-drafts', async (req, res) => {
-  const { userId } = req.body;
-  if (!userId) return res.status(400).json({ error: 'Missing userId' });
-
-  try {
-    const user = await User.findById(userId);
-    if (user) {
-      user.savedDrafts = [];
-      user.usedFreeDraftReviewIds = [];
-      await user.save();
-    }
-    res.json({ success: true, message: 'Draft cache cleared' });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to clear draft cache' });
-  }
-});
-
-// Fetch Reviews Helper
+// Fetch Location Reviews Helper
 async function fetchLocationReviews(accessToken, accountName, locationName) {
   try {
     let parentPath = locationName;
@@ -357,7 +335,7 @@ app.get('/api/businesses', async (req, res) => {
   }
 });
 
-// Fetch All Reviews + Manage 2 Free AI Reply Drafts Limit
+// Fetch All Reviews + Auto-Clear Old Drafts + Manage 2 Free AI Reply Drafts Limit
 app.get('/api/reviews/all', async (req, res) => {
   const { userId, businessId } = req.query;
 
@@ -369,6 +347,13 @@ app.get('/api/reviews/all', async (req, res) => {
     const user = await User.findById(userId);
     if (!user || !user.accessToken) {
       return res.status(401).json({ error: 'User or access token not found' });
+    }
+
+    // AUTO-CLEAR: Wipes old generic fallback strings automatically from MongoDB
+    if (user.savedDrafts && user.savedDrafts.some(d => d.draftText.includes("taking the time to share") || d.draftText.includes("for your review!"))) {
+      user.savedDrafts = [];
+      user.usedFreeDraftReviewIds = [];
+      await user.save();
     }
 
     const targetLocation = (user.locations || []).find(l => l.locationId === businessId);
@@ -402,18 +387,13 @@ app.get('/api/reviews/all', async (req, res) => {
       console.warn('Reviews API fetch notice:', err.message);
     }
 
-    // Filter unreplied reviews that have NOT been processed/dismissed yet
     const unreplied = rawReviews.filter(r => !r.reply && !user.usedFreeDraftReviewIds.includes(r.reviewId));
-
-    // Calculate how many free draft slots remain (max 2 total lifetime for free tier)
     const usedCount = user.usedFreeDraftReviewIds.length;
     const remainingDraftSlots = Math.max(0, 2 - usedCount);
 
-    // Get up to remainingDraftSlots unreplied reviews to generate/assign drafts for
     const eligibleForDraft = unreplied.slice(0, remainingDraftSlots);
     const eligibleIds = eligibleForDraft.map(r => r.reviewId);
 
-    // Build or retrieve drafts for eligible reviews
     let userModified = false;
 
     const processedReviews = await Promise.all(
@@ -421,13 +401,11 @@ app.get('/api/reviews/all', async (req, res) => {
         let aiDraftReply = '';
 
         if (!item.reply && eligibleIds.includes(item.reviewId)) {
-          // Check if draft is already saved in database
           let existingDraft = (user.savedDrafts || []).find(d => d.reviewId === item.reviewId);
 
           if (existingDraft) {
             aiDraftReply = existingDraft.draftText;
           } else {
-            // Generate new AI draft and save to DB
             aiDraftReply = await generate2LineAIReply(
               targetBusinessName,
               item.reviewerName,
@@ -471,7 +449,7 @@ app.get('/api/reviews/all', async (req, res) => {
   }
 });
 
-// Dismiss Task / Close Box (Marks review as used free credit and clears draft)
+// Dismiss Task / Close Box
 app.post('/api/reviews/dismiss', async (req, res) => {
   const { userId, reviewId } = req.body;
   if (!userId || !reviewId) return res.status(400).json({ error: 'Missing parameters' });
@@ -493,7 +471,7 @@ app.post('/api/reviews/dismiss', async (req, res) => {
   }
 });
 
-// Post Reply Live & Clear Free Draft Credit
+// Post Reply Live
 app.post('/api/reviews/reply', async (req, res) => {
   const { userId, businessId, reviewId, replyText } = req.body;
 
@@ -522,7 +500,6 @@ app.post('/api/reviews/reply', async (req, res) => {
     if (googleRes.ok) {
       const responseData = await googleRes.json();
 
-      // Clear draft & consume free draft credit in MongoDB
       if (!user.usedFreeDraftReviewIds.includes(reviewId)) {
         user.usedFreeDraftReviewIds.push(reviewId);
       }
@@ -545,4 +522,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-              
+    
