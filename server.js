@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Multi-Location GBP Sync, Multi-Key AQ. Gemini Engine
+ * Multi-Location GBP Sync, Multi-Key AQ. Gemini Engine, and Mongo Sessions
  */
 
 const express = require('express');
@@ -9,6 +9,7 @@ const cors = require('cors');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const session = require('express-session');
+const MongoStore = require('connect-mongo');
 const { google } = require('googleapis');
 const { GoogleGenAI } = require('@google/genai');
 require('dotenv').config();
@@ -22,10 +23,25 @@ app.use(cors({
   credentials: true
 }));
 
+const MONGO_URI = process.env.MONGO_URI;
+
+// Cleaned MongoDB Connection (removes deprecation warnings)
+mongoose.connect(MONGO_URI)
+  .then(() => console.log('MongoDB Atlas Connected'))
+  .catch(err => console.error('MongoDB Connection Error:', err));
+
+// Production Session Store in MongoDB (removes MemoryStore warning)
 app.use(session({
   secret: process.env.SESSION_SECRET || 'sjbs_ai_production_secret',
   resave: false,
-  saveUninitialized: false
+  saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: MONGO_URI,
+    collectionName: 'sessions'
+  }),
+  cookie: {
+    maxAge: 1000 * 60 * 60 * 24 * 7 // 7 days session persistence
+  }
 }));
 
 app.use(passport.initialize());
@@ -49,14 +65,6 @@ function getNextGeminiClient() {
   currentKeyIndex = (currentKeyIndex + 1) % geminiKeys.length;
   return new GoogleGenAI({ apiKey: key });
 }
-
-const MONGO_URI = process.env.MONGO_URI;
-mongoose.connect(MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log('MongoDB Atlas Connected'))
-.catch(err => console.error('MongoDB Connection Error:', err));
 
 const userSchema = new mongoose.Schema({
   googleId: String,
@@ -156,7 +164,6 @@ Instructions:
 3. Do NOT follow a fixed formula or template. Speak like a genuine person writing a unique message on the spot, referencing specific details from their review.
 4. Avoid repetitive sign-offs, quotes, or preambles.`;
 
-  // Try rotating through keys across multiple attempts
   let attempts = 0;
   const maxAttempts = Math.min(geminiKeys.length * 2, 6);
 
@@ -557,4 +564,3 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-      
