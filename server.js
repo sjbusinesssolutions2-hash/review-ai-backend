@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Multi-Location GBP Sync, Gemini 3.8 Flash Task Engine
+ * Multi-Location GBP Sync, Multi-Model Gemini AI Engine
  */
 
 const express = require('express');
@@ -120,28 +120,33 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Dynamic Professional 2-Sentence Reply Engine
+// Resilient AI Reply Engine with Model Fallback, Exponential Backoff, and Language Matching
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim().split(' ')[0] : 'customer';
 
-    const prompt = `Write an extremely concise, professional 2-sentence owner response to this Google review for "${businessName}".
+  const prompt = `Write an extremely concise, professional 2-sentence owner response to this Google review for "${businessName}".
 
 Reviewer: ${cleanName}
 Rating: ${starRating} Stars
 Customer Comment: "${cleanComment}"
 
 RULES:
-1. Write EXACTLY TWO short sentences.
-2. Sentence 1: A brief thank you mentioning a specific detail from their comment.
-3. Sentence 2: A warm, short welcome back.
-4. Keep it punchy and under 25 words total. No quotes, no sign-offs.`;
+1. LANGUAGE MATCH: You MUST reply in the EXACT SAME language and script as the customer's comment (e.g., Roman Gujarati, Roman Hindi, English, or any other script style).
+2. Write EXACTLY TWO short sentences.
+3. Sentence 1: A brief thank you mentioning a specific detail from their comment.
+4. Sentence 2: A warm, short welcome back.
+5. Keep it punchy. No quotes, no sign-offs, no generic placeholder templates.`;
 
-  let attempts = 0;
-  while (attempts < 3) {
+  const modelsToTry = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+  let attempt = 0;
+
+  while (attempt < 5) {
+    const modelToUse = modelsToTry[attempt % modelsToTry.length];
+    
     try {
       const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: modelToUse,
         contents: prompt
       });
 
@@ -159,18 +164,21 @@ RULES:
         if (sentences && sentences.length >= 2) {
           return `${sentences[0].trim()} ${sentences[1].trim()}`;
         } else if (sentences && sentences.length === 1) {
-          return `${sentences[0].trim()} We look forward to serving you again soon.`;
+          return `${sentences[0].trim()} We look forward to seeing you again.`;
         }
         return cleanText;
       }
     } catch (err) {
-      console.error(`Gemini API Attempt ${attempts + 1} Error:`, err.message);
+      console.warn(`Gemini API Warning [Model: ${modelToUse}, Attempt ${attempt + 1}]:`, err.message);
     }
-    attempts++;
-    await new Promise(r => setTimeout(r, 1000));
+
+    attempt++;
+    // Exponential backoff with jitter to handle 503 high-demand traffic spikes gracefully
+    const backoffDelay = Math.min(1000 * Math.pow(2, attempt), 8000) + Math.random() * 500;
+    await new Promise(r => setTimeout(r, backoffDelay));
   }
 
-  return `Thank you ${cleanName} for your ${starRating}-star review of ${businessName}! We appreciate your support and look forward to welcoming you back.`;
+  throw new Error('AI generation temporarily unavailable due to high model demand. Please refresh.');
 }
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
@@ -394,8 +402,8 @@ app.get('/api/reviews/all', async (req, res) => {
       console.warn('Reviews API fetch notice:', err.message);
     }
 
-    // Automatically purge old fallback drafts so Gemini generates real responses
-    user.savedDrafts = (user.savedDrafts || []).filter(d => !d.draftText.includes("taking the time to leave us a"));
+    // Purge old cached fallback templates from database
+    user.savedDrafts = (user.savedDrafts || []).filter(d => !d.draftText.includes("taking the time to leave us a") && !d.draftText.includes("match-ready"));
 
     const unreplied = rawReviews.filter(r => !r.reply && !user.usedFreeDraftReviewIds.includes(r.reviewId));
     const remainingSlots = Math.max(0, 2 - user.usedFreeDraftReviewIds.length);
@@ -414,19 +422,23 @@ app.get('/api/reviews/all', async (req, res) => {
         if (existingDraft && existingDraft.draftText) {
           aiDraftReply = existingDraft.draftText;
         } else {
-          aiDraftReply = await generate2LineAIReply(
-            targetBusinessName,
-            item.reviewerName,
-            item.starRating,
-            item.comment
-          );
+          try {
+            aiDraftReply = await generate2LineAIReply(
+              targetBusinessName,
+              item.reviewerName,
+              item.starRating,
+              item.comment
+            );
 
-          if (aiDraftReply) {
-            user.savedDrafts.push({
-              reviewId: item.reviewId,
-              draftText: aiDraftReply
-            });
-            userModified = true;
+            if (aiDraftReply) {
+              user.savedDrafts.push({
+                reviewId: item.reviewId,
+                draftText: aiDraftReply
+              });
+              userModified = true;
+            }
+          } catch (aiErr) {
+            console.error('AI Generation Failed for review:', item.reviewId, aiErr.message);
           }
         }
       }
@@ -529,4 +541,3 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-            
