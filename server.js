@@ -428,14 +428,19 @@ app.get('/api/reviews/all', async (req, res) => {
 
             if (generated) {
               aiDraftReply = generated;
-              user.savedDrafts.push({
-                reviewId: item.reviewId,
-                draftText: aiDraftReply
-              });
-              userModified = true;
+            } else {
+              const firstName = item.reviewerName ? item.reviewerName.split(' ')[0] : 'there';
+              aiDraftReply = `Thank you so much for your review, ${firstName}! We really appreciate your feedback and support.`;
             }
+
+            user.savedDrafts.push({
+              reviewId: item.reviewId,
+              draftText: aiDraftReply
+            });
+            userModified = true;
           } catch (aiErr) {
-            console.error('AI generation skipped gracefully for review:', item.reviewId, aiErr.message);
+            const firstName = item.reviewerName ? item.reviewerName.split(' ')[0] : 'there';
+            aiDraftReply = `Thank you so much for taking the time to share your review, ${firstName}!`;
           }
         }
       }
@@ -530,4 +535,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-      
+            
