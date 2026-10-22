@@ -127,21 +127,21 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Safe Gemini generator: 3 attempts with delay, no infinite loops
-// Authentic 2-Line Gemini AI Generator
+// 100% Authentic 2-Line AI Generator (Zero Hardcoded Templates)
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
-  const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service and experience!';
+  const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'valued customer';
 
-  const prompt = `You are the business owner of "${businessName}". 
-Write a personalized, warm, professional 2-sentence response to ${cleanName} who left a ${starRating}-star review saying: "${cleanComment}".
+  const prompt = `You are the business owner of "${businessName}".
+Write an authentic, personalized 2-sentence response to ${cleanName} who left a ${starRating}-star review saying: "${cleanComment}".
 
-CRITICAL INSTRUCTIONS:
-1. You MUST explicitly reference specific words or details from their review (such as equipment, service details, or specific compliments mentioned).
-2. Write EXACTLY 2 sentences. Line 1 thanks them and mentions their specific comment details. Line 2 reaffirms commitment and welcomes them back.
-3. NEVER use generic template phrases. Do not include quotes, intro labels, or headers.`;
+STRICT RULES:
+1. You MUST reference specific details or context from their review comment (e.g. equipment, speed, quality, staff, etc.).
+2. Write EXACTLY 2 natural sentences. Line 1 thanks them and references their specific review details. Line 2 reaffirms your quality commitment and invites them back.
+3. NEVER return template or placeholder phrases. No preambles, quotation marks, or signatures.`;
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  // Persistent retry loop: Keeps requesting Gemini until an authentic reply is generated
+  while (true) {
     try {
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
@@ -152,13 +152,12 @@ CRITICAL INSTRUCTIONS:
         return response.text.trim();
       }
     } catch (err) {
-      console.warn(`Gemini AI Attempt ${attempt} notice:`, err.message);
-      await new Promise(r => setTimeout(r, 500));
+      console.warn('Gemini generation retry:', err.message);
+      await new Promise(r => setTimeout(r, 800));
     }
   }
-
-  return `Dear ${cleanName}, thank you so much for your feedback regarding ${businessName}! We truly value your support and look forward to serving you again soon.`;
 }
+
 
 // Route to clear stale saved drafts for testing/reset
 app.post('/api/reviews/clear-drafts', async (req, res) => {
