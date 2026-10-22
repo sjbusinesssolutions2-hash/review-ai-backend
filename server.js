@@ -337,6 +337,86 @@ app.get('/api/businesses', async (req, res) => {
   }
 });
 
+// Fetch All Google Reviews with Tab Metrics
+app.get('/api/reviews/all', async (req, res) => {
+  const { userId, businessId } = req.query;
+
+  if (!userId || !businessId) {
+    return res.status(400).json({ error: 'Missing required parameters' });
+  }
+
+  try {
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const targetLocation = (user.locations || []).find(l => l.locationId === businessId);
+    const targetBusinessName = targetLocation ? targetLocation.locationName : 'Our Business';
+    const parentPath = targetLocation && targetLocation.accountLocationPath ? targetLocation.accountLocationPath : businessId;
+
+    let rawReviews = [];
+
+    if (user.accessToken && parentPath) {
+      try {
+        const response = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
+          headers: {
+            'Authorization': `Bearer ${user.accessToken}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const fetchedReviews = data.reviews || [];
+
+          rawReviews = fetchedReviews.map(r => ({
+            reviewId: r.reviewId,
+            reviewerName: (r.reviewer && r.reviewer.displayName) ? r.reviewer.displayName : 'Google User',
+            starRating: r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : r.starRating === 'THREE' ? 3 : r.starRating === 'TWO' ? 2 : 1,
+            comment: r.comment || '',
+            reply: r.reviewReply ? r.reviewReply.comment : null,
+            updateTime: r.updateTime || ''
+          }));
+        }
+      } catch (err) {
+        console.warn('All reviews fetch notice:', err.message);
+      }
+    }
+
+    const processedReviews = await Promise.all(
+      rawReviews.map(async (item) => {
+        let aiDraftReply = '';
+        if (!item.reply) {
+          aiDraftReply = await generate2LineAIReply(
+            targetBusinessName,
+            item.reviewerName,
+            item.starRating,
+            item.comment
+          );
+        }
+        return {
+          ...item,
+          aiDraftReply
+        };
+      })
+    );
+
+    const needsReplyCount = processedReviews.filter(r => !r.reply).length;
+    const repliedCount = processedReviews.filter(r => r.reply).length;
+
+    res.json({
+      reviews: processedReviews,
+      counts: {
+        needsYou: needsReplyCount,
+        all: processedReviews.length,
+        replied: repliedCount
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching all reviews:', err.message);
+    res.status(500).json({ error: 'Server error fetching reviews' });
+  }
+});
+
 // Fetch Unreplied Google Reviews & Generate Gemini AI Drafts
 app.get('/api/reviews/unreplied', async (req, res) => {
   const { userId, businessId } = req.query;
