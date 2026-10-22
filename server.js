@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Multi-Location GBP Sync, Gemini AI Free Tier Task Engine
+ * Multi-Location GBP Sync, Strictly Dynamic Gemini AI Tasks
  */
 
 const express = require('express');
@@ -120,27 +120,36 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Authentic 2-Line Gemini AI Generator
+// Strictly Dynamic Gemini Generator — Zero Templates
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
-  const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'valued customer';
+  const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'customer';
 
-  const prompt = `You are the owner of "${businessName}". Write a short, warm 2-sentence response to ${cleanName} who left a ${starRating}-star review: "${cleanComment}". Line 1 thanks them and mentions details from their review (like bat repair, service, etc.). Line 2 invites them back. Do not use quotes or intro labels.`;
+  const prompt = `You are the owner of "${businessName}". Write a personalized, authentic 2-sentence response to ${cleanName} for their ${starRating}-star review: "${cleanComment}".
 
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt
-    });
+RULES:
+1. Mention specific details from their review (e.g., bat repairs, Sajid Uncle, fixing bats, speed, etc.).
+2. Exactly 2 sentences. No preambles, no quotes, no placeholders.`;
 
-    if (response && response.text && response.text.trim().length > 0) {
-      return response.text.trim();
+  let attempts = 0;
+  while (attempts < 3) {
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt
+      });
+
+      if (response && response.text && response.text.trim().length > 0) {
+        return response.text.trim();
+      }
+    } catch (err) {
+      console.warn(`Gemini attempt ${attempts + 1} failed:`, err.message);
     }
-  } catch (err) {
-    console.warn('Gemini generation notice:', err.message);
+    attempts++;
+    await new Promise(r => setTimeout(r, 1000));
   }
 
-  return `Thank you ${cleanName} for taking the time to share your feedback! We're glad you had a great experience with us and look forward to serving you again soon.`;
+  throw new Error("Gemini API failed to return content");
 }
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
@@ -320,7 +329,6 @@ app.get('/api/businesses', async (req, res) => {
   }
 });
 
-// Fetch All Reviews & Guarantee 2 Free AI Reply Tasks
 app.get('/api/reviews/all', async (req, res) => {
   const { userId, businessId } = req.query;
 
@@ -365,28 +373,29 @@ app.get('/api/reviews/all', async (req, res) => {
       console.warn('Reviews API fetch notice:', err.message);
     }
 
-    // Filter unreplied reviews that have NOT been processed or dismissed
     const unreplied = rawReviews.filter(r => !r.reply && !user.usedFreeDraftReviewIds.includes(r.reviewId));
-
-    // Allocate up to 2 free draft slots
-    const usedCount = user.usedFreeDraftReviewIds.length;
-    const remainingSlots = Math.max(0, 2 - usedCount);
-
+    const remainingSlots = Math.max(0, 2 - user.usedFreeDraftReviewIds.length);
     const eligibleForDraft = unreplied.slice(0, remainingSlots);
     const eligibleIds = eligibleForDraft.map(r => r.reviewId);
 
+    // Force purge any old templates from database
+    user.savedDrafts = (user.savedDrafts || []).filter(d => 
+      !d.draftText.includes("taking the time to share your feedback")
+    );
+
     let userModified = false;
+    const processedReviews = [];
 
-    const processedReviews = await Promise.all(
-      rawReviews.map(async (item) => {
-        let aiDraftReply = '';
+    for (const item of rawReviews) {
+      let aiDraftReply = '';
 
-        if (!item.reply && eligibleIds.includes(item.reviewId)) {
-          let existingDraft = (user.savedDrafts || []).find(d => d.reviewId === item.reviewId);
+      if (!item.reply && eligibleIds.includes(item.reviewId)) {
+        let existingDraft = user.savedDrafts.find(d => d.reviewId === item.reviewId);
 
-          if (existingDraft && existingDraft.draftText) {
-            aiDraftReply = existingDraft.draftText;
-          } else {
+        if (existingDraft && existingDraft.draftText) {
+          aiDraftReply = existingDraft.draftText;
+        } else {
+          try {
             aiDraftReply = await generate2LineAIReply(
               targetBusinessName,
               item.reviewerName,
@@ -399,15 +408,17 @@ app.get('/api/reviews/all', async (req, res) => {
               draftText: aiDraftReply
             });
             userModified = true;
+          } catch (e) {
+            console.error(`Failed to generate draft for ${item.reviewId}:`, e.message);
           }
         }
+      }
 
-        return {
-          ...item,
-          aiDraftReply
-        };
-      })
-    );
+      processedReviews.push({
+        ...item,
+        aiDraftReply
+      });
+    }
 
     if (userModified) {
       await user.save();
@@ -430,7 +441,6 @@ app.get('/api/reviews/all', async (req, res) => {
   }
 });
 
-// Dismiss Task / Close Box
 app.post('/api/reviews/dismiss', async (req, res) => {
   const { userId, reviewId } = req.body;
   if (!userId || !reviewId) return res.status(400).json({ error: 'Missing parameters' });
@@ -452,7 +462,6 @@ app.post('/api/reviews/dismiss', async (req, res) => {
   }
 });
 
-// Post Reply Live
 app.post('/api/reviews/reply', async (req, res) => {
   const { userId, businessId, reviewId, replyText } = req.body;
 
@@ -503,4 +512,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-      
+    
