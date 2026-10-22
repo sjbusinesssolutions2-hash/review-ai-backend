@@ -125,13 +125,15 @@ async function generate2LineAIReply(businessName, reviewerName, starRating, comm
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'valued customer';
 
-  const prompt = `You are the owner of "${businessName}". Write a short, professional response to ${cleanName} who left a ${starRating}-star review: "${cleanComment}".
+  const prompt = `You are the owner of "${businessName}". Write an extremely brief, professional 2-sentence response to ${cleanName} who left a ${starRating}-star review.
 
-STRICT FORMAT RULES:
-1. Write EXACTLY TWO sentences total. Exactly two sentences, no more.
-2. Sentence 1: Thank them and reference a specific detail from their review.
-3. Sentence 2: Reaffirm your commitment and invite them back.
-4. NO preambles, NO greetings like Dear, NO quotation marks, NO signatures.`;
+Review text: "${cleanComment}"
+
+STRICT RULES:
+1. Write EXACTLY TWO short sentences. No long run-on sentences.
+2. Sentence 1: A brief thank you mentioning one key detail.
+3. Sentence 2: A short welcome back message.
+4. Maximum total length: 30 words. No greetings like Dear, no quotes, no signatures.`;
 
   let attempts = 0;
   while (attempts < 5) {
@@ -158,6 +160,7 @@ STRICT FORMAT RULES:
   }
   return `Thank you for the ${starRating}-star review, ${cleanName}! We look forward to seeing you again soon.`;
 }
+
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
   try {
