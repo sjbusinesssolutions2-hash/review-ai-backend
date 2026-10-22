@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Multi-Location GBP Sync, Multi-Key AQ. Gemini Engine
+ * Multi-Location GBP Sync, Concurrent Multi-Key AQ. Gemini Engine
  */
 
 const express = require('express');
@@ -45,18 +45,6 @@ const geminiKeys = rawKeysInput
   .split(',')
   .map(k => k.trim())
   .filter(k => k.startsWith('AQ.'));
-
-let currentKeyIndex = 0;
-
-function getNextGeminiClient() {
-  if (geminiKeys.length === 0) {
-    console.error('CRITICAL: No valid AQ. Gemini API keys found in environment variables.');
-    return null;
-  }
-  const key = geminiKeys[currentKeyIndex];
-  currentKeyIndex = (currentKeyIndex + 1) % geminiKeys.length;
-  return new GoogleGenAI({ apiKey: key });
-}
 
 const userSchema = new mongoose.Schema({
   googleId: String,
@@ -137,7 +125,6 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Resilient Multi-Key Rotation AI Engine
 // High-Speed Concurrent Multi-Key Race Engine
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   if (geminiKeys.length === 0) return null;
@@ -157,7 +144,6 @@ Instructions:
 3. Do NOT follow a fixed formula or template. Speak like a genuine person writing a unique message on the spot, referencing specific details from their review.
 4. Avoid repetitive sign-offs, quotes, or preambles.`;
 
-  // Fire requests to all keys simultaneously, take the first successful response
   const promises = geminiKeys.map(async (key) => {
     try {
       const aiClient = new GoogleGenAI({ apiKey: key });
@@ -185,14 +171,12 @@ Instructions:
         return cleanText;
       }
     } catch (err) {
-      // Ignore individual failures in a race condition
       return null;
     }
     return null;
   });
 
   try {
-    // Promise.any returns the first successfully resolved promise
     const result = await Promise.any(promises);
     return result;
   } catch (aggregateErr) {
@@ -200,7 +184,6 @@ Instructions:
     return null;
   }
 }
-
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
   try {
@@ -423,18 +406,13 @@ app.get('/api/reviews/all', async (req, res) => {
       console.warn('Reviews API fetch notice:', err.message);
     }
 
-    const unreplied = rawReviews.filter(r => !r.reply && !user.usedFreeDraftReviewIds.includes(r.reviewId));
-    const remainingSlots = Math.max(0, 2 - user.usedFreeDraftReviewIds.length);
-    const eligibleForDraft = unreplied.slice(0, remainingSlots);
-    const eligibleIds = eligibleForDraft.map(r => r.reviewId);
-
     let userModified = false;
     const processedReviews = [];
 
     for (const item of rawReviews) {
       let aiDraftReply = '';
 
-      if (!item.reply && eligibleIds.includes(item.reviewId)) {
+      if (!item.reply) {
         let existingDraft = user.savedDrafts.find(d => d.reviewId === item.reviewId);
 
         if (existingDraft && existingDraft.draftText) {
@@ -497,10 +475,6 @@ app.post('/api/reviews/dismiss', async (req, res) => {
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    if (!user.usedFreeDraftReviewIds.includes(reviewId)) {
-      user.usedFreeDraftReviewIds.push(reviewId);
-    }
-
     user.savedDrafts = user.savedDrafts.filter(d => d.reviewId !== reviewId);
     await user.save();
 
@@ -537,10 +511,6 @@ app.post('/api/reviews/reply', async (req, res) => {
 
     if (googleRes.ok) {
       const responseData = await googleRes.json();
-
-      if (!user.usedFreeDraftReviewIds.includes(reviewId)) {
-        user.usedFreeDraftReviewIds.push(reviewId);
-      }
       user.savedDrafts = user.savedDrafts.filter(d => d.reviewId !== reviewId);
       await user.save();
 
@@ -560,4 +530,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-        
+      
