@@ -128,11 +128,18 @@ passport.deserializeUser(async (id, done) => {
 });
 
 // Safe Gemini generator: 3 attempts with delay, no infinite loops
+// Authentic 2-Line Gemini AI Generator
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
-  const cleanComment = comment && comment.trim() !== '' ? comment : 'Great service!';
-  const cleanName = reviewerName && reviewerName.trim() !== '' ? reviewerName : 'valued customer';
+  const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service and experience!';
+  const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'valued customer';
 
-  const prompt = `You are the business owner of "${businessName}". Write a 2-sentence response to ${cleanName} who left a ${starRating}-star review saying: "${cleanComment}". Line 1 thanks them referencing specific details. Line 2 invites them back. No quotes or preambles.`;
+  const prompt = `You are the business owner of "${businessName}". 
+Write a personalized, warm, professional 2-sentence response to ${cleanName} who left a ${starRating}-star review saying: "${cleanComment}".
+
+CRITICAL INSTRUCTIONS:
+1. You MUST explicitly reference specific words or details from their review (such as equipment, service details, or specific compliments mentioned).
+2. Write EXACTLY 2 sentences. Line 1 thanks them and mentions their specific comment details. Line 2 reaffirms commitment and welcomes them back.
+3. NEVER use generic template phrases. Do not include quotes, intro labels, or headers.`;
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -145,13 +152,31 @@ async function generate2LineAIReply(businessName, reviewerName, starRating, comm
         return response.text.trim();
       }
     } catch (err) {
-      console.warn(`Gemini API attempt ${attempt} failed:`, err.message);
-      await new Promise(r => setTimeout(r, 600));
+      console.warn(`Gemini AI Attempt ${attempt} notice:`, err.message);
+      await new Promise(r => setTimeout(r, 500));
     }
   }
 
-  return `Thank you ${cleanName} for your review! We appreciate your support and look forward to welcoming you back soon.`;
+  return `Dear ${cleanName}, thank you so much for your feedback regarding ${businessName}! We truly value your support and look forward to serving you again soon.`;
 }
+
+// Route to clear stale saved drafts for testing/reset
+app.post('/api/reviews/clear-drafts', async (req, res) => {
+  const { userId } = req.body;
+  if (!userId) return res.status(400).json({ error: 'Missing userId' });
+
+  try {
+    const user = await User.findById(userId);
+    if (user) {
+      user.savedDrafts = [];
+      user.usedFreeDraftReviewIds = [];
+      await user.save();
+    }
+    res.json({ success: true, message: 'Draft cache cleared' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to clear draft cache' });
+  }
+});
 
 // Fetch Reviews Helper
 async function fetchLocationReviews(accessToken, accountName, locationName) {
