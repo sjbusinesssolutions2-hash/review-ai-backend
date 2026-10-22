@@ -141,7 +141,6 @@ STRICT RULES:
 
       if (response && response.text && response.text.trim().length > 0) {
         const resultText = response.text.trim();
-        // Ensure it didn't accidentally spit out an old generic string
         if (!resultText.includes("taking the time to share your feedback")) {
           return resultText;
         }
@@ -495,7 +494,7 @@ app.post('/api/reviews/reply', async (req, res) => {
       user.savedDrafts = user.savedDrafts.filter(d => d.reviewId !== reviewId);
       await user.save();
 
-0      return res.json({ success: true, reply: responseData });
+      return res.json({ success: true, reply: responseData });
     } else {
       const errorText = await googleRes.text();
       console.warn('Google Business Reply API Error:', errorText);
@@ -511,3 +510,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+                
