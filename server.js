@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Multi-Location GBP Sync, Multi-Model Gemini AI Engine
+ * Multi-Location GBP Sync, Resilient Gemini 3.8 Flash Engine
  */
 
 const express = require('express');
@@ -120,33 +120,28 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Resilient AI Reply Engine with Model Fallback, Exponential Backoff, and Language Matching
+// Resilient AI Engine with Exponential Backoff & Non-Formulaic Prompting
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim().split(' ')[0] : 'customer';
 
-  const prompt = `Write an extremely concise, professional 2-sentence owner response to this Google review for "${businessName}".
+  const prompt = `You are replying to a Google Business review for "${businessName}" as a business owner.
 
 Reviewer: ${cleanName}
 Rating: ${starRating} Stars
-Customer Comment: "${cleanComment}"
+Review: "${cleanComment}"
 
-RULES:
-1. LANGUAGE MATCH: You MUST reply in the EXACT SAME language and script as the customer's comment (e.g., Roman Gujarati, Roman Hindi, English, or any other script style).
-2. Write EXACTLY TWO short sentences.
-3. Sentence 1: A brief thank you mentioning a specific detail from their comment.
-4. Sentence 2: A warm, short welcome back.
-5. Keep it punchy. No quotes, no sign-offs, no generic placeholder templates.`;
+Instructions:
+1. Match the exact language and script of the customer's comment (English, Roman Hindi, Roman Gujarati, etc.).
+2. Write a concise, natural response (1 to 2 sentences max).
+3. Do NOT follow a fixed formula or template. Speak like a genuine person writing a unique message on the spot, referencing specific details from their review.
+4. Avoid repetitive sign-offs, quotes, or preambles.`;
 
-  const modelsToTry = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
   let attempt = 0;
-
-  while (attempt < 5) {
-    const modelToUse = modelsToTry[attempt % modelsToTry.length];
-    
+  while (attempt < 4) {
     try {
       const response = await ai.models.generateContent({
-        model: modelToUse,
+        model: 'gemini-3.8-flash',
         contents: prompt
       });
 
@@ -164,21 +159,21 @@ RULES:
         if (sentences && sentences.length >= 2) {
           return `${sentences[0].trim()} ${sentences[1].trim()}`;
         } else if (sentences && sentences.length === 1) {
-          return `${sentences[0].trim()} We look forward to seeing you again.`;
+          return `${sentences[0].trim()}`;
         }
         return cleanText;
       }
     } catch (err) {
-      console.warn(`Gemini API Warning [Model: ${modelToUse}, Attempt ${attempt + 1}]:`, err.message);
+      console.warn(`Gemini API Warning [Attempt ${attempt + 1}]:`, err.message);
     }
 
     attempt++;
-    // Exponential backoff with jitter to handle 503 high-demand traffic spikes gracefully
-    const backoffDelay = Math.min(1000 * Math.pow(2, attempt), 8000) + Math.random() * 500;
+    // Generous exponential backoff to clear 503 high-demand traffic spikes safely
+    const backoffDelay = Math.min(2000 * Math.pow(1.8, attempt), 8000) + Math.random() * 500;
     await new Promise(r => setTimeout(r, backoffDelay));
   }
 
-  throw new Error('AI generation temporarily unavailable due to high model demand. Please refresh.');
+  throw new Error('AI generation temporarily unavailable due to high model demand.');
 }
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
@@ -402,8 +397,7 @@ app.get('/api/reviews/all', async (req, res) => {
       console.warn('Reviews API fetch notice:', err.message);
     }
 
-    // Purge old cached fallback templates from database
-    user.savedDrafts = (user.savedDrafts || []).filter(d => !d.draftText.includes("taking the time to leave us a") && !d.draftText.includes("match-ready"));
+    user.savedDrafts = (user.savedDrafts || []).filter(d => !d.draftText.includes("taking the time") && !d.draftText.includes("match-ready"));
 
     const unreplied = rawReviews.filter(r => !r.reply && !user.usedFreeDraftReviewIds.includes(r.reviewId));
     const remainingSlots = Math.max(0, 2 - user.usedFreeDraftReviewIds.length);
@@ -438,7 +432,7 @@ app.get('/api/reviews/all', async (req, res) => {
               userModified = true;
             }
           } catch (aiErr) {
-            console.error('AI Generation Failed for review:', item.reviewId, aiErr.message);
+            console.error('AI Generation Notice for review:', item.reviewId, aiErr.message);
           }
         }
       }
@@ -541,3 +535,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+          
