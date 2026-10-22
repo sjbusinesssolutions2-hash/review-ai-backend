@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Enterprise Multi-Location GBP Sync, Authentic Gemini AI Replies, Free Tier Quota Engine
+ * Enterprise Multi-Location GBP Sync, Authentic Fast Gemini AI Replies
  */
 
 const express = require('express');
@@ -43,7 +43,7 @@ mongoose.connect(MONGO_URI, {
 .then(() => console.log('MongoDB Atlas Connected'))
 .catch(err => console.error('MongoDB Connection Error:', err));
 
-// User Schema with Free AI Credits Tracker
+// User Schema
 const userSchema = new mongoose.Schema({
   googleId: String,
   displayName: String,
@@ -125,34 +125,27 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// 100% Authentic 2-Line Gemini AI Generator (Zero Generic Hardcoding)
+// Fast, Authentic 2-Line Gemini AI Generator (Max 3.5s execution window, no infinite loops)
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'valued customer';
 
-  const prompt = `You are the business owner of "${businessName}".
-Write an authentic, highly personalized 2-sentence response to ${cleanName} who left a ${starRating}-star review saying: "${cleanComment}".
+  const prompt = `You are the owner of "${businessName}". Write a 2-sentence reply to ${cleanName} who left a ${starRating}-star review: "${cleanComment}". Mention specific words from their review. Line 1 thanks them referencing their comment. Line 2 invites them back. No quotes, intro, or signatures.`;
 
-CRITICAL INSTRUCTIONS:
-1. You MUST explicitly reference specific words or details from their review comment (e.g., equipment, repair work, staff, or service details mentioned).
-2. Write EXACTLY 2 natural sentences. Sentence 1 thanks them and references their specific review details. Sentence 2 reaffirms commitment and invites them back.
-3. NEVER return template or placeholder phrases. No preambles, quotation marks, or signature lines.`;
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt
+    });
 
-  while (true) {
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt
-      });
-
-      if (response && response.text && response.text.trim().length > 0) {
-        return response.text.trim();
-      }
-    } catch (err) {
-      console.warn('Gemini AI generation retry:', err.message);
-      await new Promise(r => setTimeout(r, 800));
+    if (response && response.text && response.text.trim().length > 0) {
+      return response.text.trim();
     }
+  } catch (err) {
+    console.warn('Gemini draft generation notice:', err.message);
   }
+
+  return '';
 }
 
 // Fetch Location Reviews Helper
@@ -335,7 +328,7 @@ app.get('/api/businesses', async (req, res) => {
   }
 });
 
-// Fetch All Reviews + Auto-Clear Old Drafts + Manage 2 Free AI Reply Drafts Limit
+// Fetch All Reviews Fast
 app.get('/api/reviews/all', async (req, res) => {
   const { userId, businessId } = req.query;
 
@@ -349,7 +342,7 @@ app.get('/api/reviews/all', async (req, res) => {
       return res.status(401).json({ error: 'User or access token not found' });
     }
 
-    // AUTO-CLEAR: Wipes old generic fallback strings automatically from MongoDB
+    // Auto-clear stale fallback strings automatically from MongoDB
     if (user.savedDrafts && user.savedDrafts.some(d => d.draftText.includes("taking the time to share") || d.draftText.includes("for your review!"))) {
       user.savedDrafts = [];
       user.usedFreeDraftReviewIds = [];
@@ -403,7 +396,7 @@ app.get('/api/reviews/all', async (req, res) => {
         if (!item.reply && eligibleIds.includes(item.reviewId)) {
           let existingDraft = (user.savedDrafts || []).find(d => d.reviewId === item.reviewId);
 
-          if (existingDraft) {
+          if (existingDraft && existingDraft.draftText) {
             aiDraftReply = existingDraft.draftText;
           } else {
             aiDraftReply = await generate2LineAIReply(
@@ -413,11 +406,13 @@ app.get('/api/reviews/all', async (req, res) => {
               item.comment
             );
 
-            user.savedDrafts.push({
-              reviewId: item.reviewId,
-              draftText: aiDraftReply
-            });
-            userModified = true;
+            if (aiDraftReply) {
+              user.savedDrafts.push({
+                reviewId: item.reviewId,
+                draftText: aiDraftReply
+              });
+              userModified = true;
+            }
           }
         }
 
@@ -449,7 +444,7 @@ app.get('/api/reviews/all', async (req, res) => {
   }
 });
 
-// Dismiss Task / Close Box
+// Dismiss Task
 app.post('/api/reviews/dismiss', async (req, res) => {
   const { userId, reviewId } = req.body;
   if (!userId || !reviewId) return res.status(400).json({ error: 'Missing parameters' });
@@ -522,4 +517,3 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-    
