@@ -449,6 +449,55 @@ app.get('/api/reviews/all', async (req, res) => {
   }
 });
 
+// Post or Update Review Reply Live on Google Business Profile
+app.post('/api/reviews/reply', async (req, res) => {
+  const { userId, businessId, reviewId, replyText } = req.body;
+
+  if (!userId || !businessId || !reviewId || !replyText || replyText.trim() === '') {
+    return res.status(400).json({ error: 'Missing required parameters or empty reply text' });
+  }
+
+  try {
+    const user = await User.findById(userId);
+    if (!user || !user.accessToken) {
+      return res.status(401).json({ error: 'Unauthorized user access' });
+    }
+
+    const targetLocation = (user.locations || []).find(l => l.locationId === businessId);
+    let parentPath = targetLocation && targetLocation.accountLocationPath ? targetLocation.accountLocationPath : null;
+
+    // Fallback path if missing
+    if (!parentPath) {
+      parentPath = `locations/${businessId}`;
+    }
+
+    // Google API update/create reply endpoint
+    const updateUrl = `https://mybusiness.googleapis.com/v4/${parentPath}/reviews/${reviewId}/reply`;
+
+    const googleRes = await fetch(updateUrl, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${user.accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ comment: replyText })
+    });
+
+    if (googleRes.ok) {
+      const responseData = await googleRes.json();
+      return res.json({ success: true, reply: responseData });
+    } else {
+      const errorText = await googleRes.text();
+      console.warn('Google Business Reply API Error:', errorText);
+      return res.status(googleRes.status).json({ error: 'Failed to post reply to Google Business Profile' });
+    }
+  } catch (err) {
+    console.error('Error posting/editing review reply:', err.message);
+    res.status(500).json({ error: 'Server error updating review reply' });
+  }
+});
+
+
 // Fetch Unreplied Google Reviews & Generate Gemini AI Drafts
 app.get('/api/reviews/unreplied', async (req, res) => {
   const { userId, businessId } = req.query;
