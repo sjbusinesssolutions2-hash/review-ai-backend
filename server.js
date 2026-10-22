@@ -125,13 +125,13 @@ async function generate2LineAIReply(businessName, reviewerName, starRating, comm
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'valued customer';
 
-  const prompt = `You are the owner of "${businessName}". Write a professional response to ${cleanName} who left a ${starRating}-star review: "${cleanComment}".
+  const prompt = `You are the owner of "${businessName}". Write a short, professional response to ${cleanName} who left a ${starRating}-star review: "${cleanComment}".
 
 STRICT FORMAT RULES:
-1. Write EXACTLY TWO sentences total. Not one, not three—precisely two sentences.
-2. Sentence 1: Thank them and directly mention specific words from their review.
+1. Write EXACTLY TWO sentences total. Exactly two sentences, no more.
+2. Sentence 1: Thank them and reference a specific detail from their review.
 3. Sentence 2: Reaffirm your commitment and invite them back.
-4. NO preambles, NO greetings like "Dear", NO quotation marks, NO sign-offs or signatures.`;
+4. NO preambles, NO greetings like Dear, NO quotation marks, NO signatures.`;
 
   let attempts = 0;
   while (attempts < 5) {
@@ -143,15 +143,12 @@ STRICT FORMAT RULES:
 
       if (response && response.text && response.text.trim().length > 0) {
         let text = response.text.trim().replace(/^["']|["']$/g, '');
-        // Verify sentence count roughly
-        const sentences = text.split(/[.!?]+/).filter(Boolean);
-        if (sentences.length <= 2) {
-          return text;
+        const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+        
+        if (sentences.length >= 2) {
+          return `${sentences[0].trim()} ${sentences[1].trim()}`;
         }
-        // If it generated more, take just the first 2 sentences
-        if (sentences.length > 2) {
-          return `${sentences[0].trim()}. ${sentences[1].trim()}.`;
-        }
+        return text;
       }
     } catch (err) {
       console.warn(`Gemini AI Attempt ${attempts + 1} notice:`, err.message);
@@ -159,7 +156,7 @@ STRICT FORMAT RULES:
     attempts++;
     await new Promise(r => setTimeout(r, 600));
   }
-  return `Thank you so much for the ${starRating}-star review, ${reviewerName}! We look forward to seeing you again soon.`;
+  return `Thank you for the ${starRating}-star review, ${cleanName}! We look forward to seeing you again soon.`;
 }
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
@@ -383,6 +380,12 @@ app.get('/api/reviews/all', async (req, res) => {
       console.warn('Reviews API fetch notice:', err.message);
     }
 
+    // Automatically flush any old long drafts so they get regenerated clean
+    user.savedDrafts = (user.savedDrafts || []).filter(d => {
+      const sentenceCount = (d.draftText.match(/[^.!?]+[.!?]+/g) || []).length;
+      return sentenceCount <= 2;
+    });
+
     const unreplied = rawReviews.filter(r => !r.reply && !user.usedFreeDraftReviewIds.includes(r.reviewId));
     const remainingSlots = Math.max(0, 2 - user.usedFreeDraftReviewIds.length);
     const eligibleForDraft = unreplied.slice(0, remainingSlots);
@@ -515,4 +518,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-      
+    
