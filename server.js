@@ -120,7 +120,7 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Strict Persistent Retry: Loops continuously until Gemini successfully returns a unique AI reply
+// Strict Persistent Retry Engine using gemini-2.5-flash
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'valued customer';
@@ -329,7 +329,6 @@ app.get('/api/businesses', async (req, res) => {
   }
 });
 
-// Fetch All Reviews & Force Persistent Gemini Generation for 2 Free Tasks
 app.get('/api/reviews/all', async (req, res) => {
   const { userId, businessId } = req.query;
 
@@ -374,7 +373,6 @@ app.get('/api/reviews/all', async (req, res) => {
       console.warn('Reviews API fetch notice:', err.message);
     }
 
-    // Clean out any historical stored templates from DB
     user.savedDrafts = (user.savedDrafts || []).filter(d => 
       !d.draftText.includes("taking the time to share your feedback")
     );
@@ -396,7 +394,6 @@ app.get('/api/reviews/all', async (req, res) => {
         if (existingDraft && existingDraft.draftText && !existingDraft.draftText.includes("taking the time to share")) {
           aiDraftReply = existingDraft.draftText;
         } else {
-          // Guaranteed loop until Gemini responds with unique text
           aiDraftReply = await generate2LineAIReply(
             targetBusinessName,
             item.reviewerName,
@@ -510,4 +507,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-                
+        
