@@ -1,6 +1,6 @@
 /**
- * SJbs.AI - Production Enterprise Backend Engine
- * Live Manager & Owner Google My Business Sync, Gemini AI Replies
+ * SJbs.AI - Production Engine
+ * Enterprise Multi-Location GBP Sync, Gemini AI Replies, Free Tier Quota Engine
  */
 
 const express = require('express');
@@ -43,7 +43,7 @@ mongoose.connect(MONGO_URI, {
 .then(() => console.log('MongoDB Atlas Connected'))
 .catch(err => console.error('MongoDB Connection Error:', err));
 
-// User Schema
+// User Schema with Free AI Credits Tracker
 const userSchema = new mongoose.Schema({
   googleId: String,
   displayName: String,
@@ -51,6 +51,13 @@ const userSchema = new mongoose.Schema({
   avatar: String,
   accessToken: String,
   refreshToken: String,
+  // Tracks used free AI draft review IDs so they never repeat
+  usedFreeDraftReviewIds: { type: [String], default: [] },
+  // Saved AI drafts per review: { reviewId: string, draftText: string }
+  savedDrafts: [{
+    reviewId: String,
+    draftText: String
+  }],
   locations: [{
     locationId: String,
     accountLocationPath: String,
@@ -120,7 +127,33 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Helper: Query reviews cleanly
+// Safe Gemini generator: 3 attempts with delay, no infinite loops
+async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
+  const cleanComment = comment && comment.trim() !== '' ? comment : 'Great service!';
+  const cleanName = reviewerName && reviewerName.trim() !== '' ? reviewerName : 'valued customer';
+
+  const prompt = `You are the business owner of "${businessName}". Write a 2-sentence response to ${cleanName} who left a ${starRating}-star review saying: "${cleanComment}". Line 1 thanks them referencing specific details. Line 2 invites them back. No quotes or preambles.`;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt
+      });
+
+      if (response && response.text && response.text.trim().length > 0) {
+        return response.text.trim();
+      }
+    } catch (err) {
+      console.warn(`Gemini API attempt ${attempt} failed:`, err.message);
+      await new Promise(r => setTimeout(r, 600));
+    }
+  }
+
+  return `Thank you ${cleanName} for your review! We appreciate your support and look forward to welcoming you back soon.`;
+}
+
+// Fetch Reviews Helper
 async function fetchLocationReviews(accessToken, accountName, locationName) {
   try {
     let parentPath = locationName;
@@ -161,38 +194,6 @@ async function fetchLocationReviews(accessToken, accountName, locationName) {
   }
   return { reviews: [], reviewCount: 0, rating: 5.0, parentPath: locationName };
 }
-
-// AI Generator with single fast pass (NO infinite loops)
-async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
-  const cleanComment = comment && comment.trim() !== '' ? comment : 'Great service!';
-  const cleanName = reviewerName && reviewerName.trim() !== '' ? reviewerName : 'valued customer';
-
-  const prompt = `
-You are the business owner of "${businessName}". 
-Write an authentic, highly tailored response to ${cleanName} who left a ${starRating}-star review saying: "${cleanComment}".
-
-STRICT RULES:
-1. Output EXACTLY 2 natural sentences. Line 1 thanks them and references their specific comment. Line 2 reaffirms commitment and welcomes them back.
-2. Absolutely NO quotation marks, preambles, or intro text.
-`;
-
-  while (true) {
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt
-      });
-
-      if (response && response.text && response.text.trim().length > 0) {
-        return response.text.trim();
-      }
-    } catch (err) {
-      // Silent loop retry on network or model hiccup
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-  }
-}
-
 
 // --- AUTH ROUTES ---
 app.get('/auth/google', passport.authenticate('google', {
@@ -288,7 +289,7 @@ app.get('/api/user', async (req, res) => {
   }
 });
 
-// Fetch Business Profiles with Live Counts
+// Fetch Business Profiles
 app.get('/api/businesses', async (req, res) => {
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: 'Missing userId' });
@@ -332,7 +333,7 @@ app.get('/api/businesses', async (req, res) => {
   }
 });
 
-// Fetch All Google Reviews with Fast Single-Pass Processing
+// Fetch All Reviews + Manage 2 Free AI Reply Drafts Limit
 app.get('/api/reviews/all', async (req, res) => {
   const { userId, businessId } = req.query;
 
@@ -377,24 +378,57 @@ app.get('/api/reviews/all', async (req, res) => {
       console.warn('Reviews API fetch notice:', err.message);
     }
 
-    // Process Gemini AI drafts with single-pass speed
+    // Filter unreplied reviews that have NOT been processed/dismissed yet
+    const unreplied = rawReviews.filter(r => !r.reply && !user.usedFreeDraftReviewIds.includes(r.reviewId));
+
+    // Calculate how many free draft slots remain (max 2 total lifetime for free tier)
+    const usedCount = user.usedFreeDraftReviewIds.length;
+    const remainingDraftSlots = Math.max(0, 2 - usedCount);
+
+    // Get up to remainingDraftSlots unreplied reviews to generate/assign drafts for
+    const eligibleForDraft = unreplied.slice(0, remainingDraftSlots);
+    const eligibleIds = eligibleForDraft.map(r => r.reviewId);
+
+    // Build or retrieve drafts for eligible reviews
+    let userModified = false;
+
     const processedReviews = await Promise.all(
       rawReviews.map(async (item) => {
         let aiDraftReply = '';
-        if (!item.reply) {
-          aiDraftReply = await generate2LineAIReply(
-            targetBusinessName,
-            item.reviewerName,
-            item.starRating,
-            item.comment
-          );
+
+        if (!item.reply && eligibleIds.includes(item.reviewId)) {
+          // Check if draft is already saved in database
+          let existingDraft = (user.savedDrafts || []).find(d => d.reviewId === item.reviewId);
+
+          if (existingDraft) {
+            aiDraftReply = existingDraft.draftText;
+          } else {
+            // Generate new AI draft and save to DB
+            aiDraftReply = await generate2LineAIReply(
+              targetBusinessName,
+              item.reviewerName,
+              item.starRating,
+              item.comment
+            );
+
+            user.savedDrafts.push({
+              reviewId: item.reviewId,
+              draftText: aiDraftReply
+            });
+            userModified = true;
+          }
         }
+
         return {
           ...item,
           aiDraftReply
         };
       })
     );
+
+    if (userModified) {
+      await user.save();
+    }
 
     const needsReplyCount = processedReviews.filter(r => !r.reply).length;
     const repliedCount = processedReviews.filter(r => r.reply).length;
@@ -413,7 +447,29 @@ app.get('/api/reviews/all', async (req, res) => {
   }
 });
 
-// Post Reply Live
+// Dismiss Task / Close Box (Marks review as used free credit and clears draft)
+app.post('/api/reviews/dismiss', async (req, res) => {
+  const { userId, reviewId } = req.body;
+  if (!userId || !reviewId) return res.status(400).json({ error: 'Missing parameters' });
+
+  try {
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    if (!user.usedFreeDraftReviewIds.includes(reviewId)) {
+      user.usedFreeDraftReviewIds.push(reviewId);
+    }
+
+    user.savedDrafts = user.savedDrafts.filter(d => d.reviewId !== reviewId);
+    await user.save();
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error dismissing task' });
+  }
+});
+
+// Post Reply Live & Clear Free Draft Credit
 app.post('/api/reviews/reply', async (req, res) => {
   const { userId, businessId, reviewId, replyText } = req.body;
 
@@ -441,6 +497,14 @@ app.post('/api/reviews/reply', async (req, res) => {
 
     if (googleRes.ok) {
       const responseData = await googleRes.json();
+
+      // Clear draft & consume free draft credit in MongoDB
+      if (!user.usedFreeDraftReviewIds.includes(reviewId)) {
+        user.usedFreeDraftReviewIds.push(reviewId);
+      }
+      user.savedDrafts = user.savedDrafts.filter(d => d.reviewId !== reviewId);
+      await user.save();
+
       return res.json({ success: true, reply: responseData });
     } else {
       const errorText = await googleRes.text();
@@ -453,8 +517,8 @@ app.post('/api/reviews/reply', async (req, res) => {
   }
 });
 
-app.get('/', (req, res) => res.send('SJbs.AI Enterprise Engine Live'));
+app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-          
+              
