@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Multi-Location GBP Sync, Gemini 3.8 Flash Task Engine
+ * Multi-Location GBP Sync, Strict 2-Sentence Gemini AI Engine
  */
 
 const express = require('express');
@@ -120,16 +120,18 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
+// Strict 2-Sentence Response Generator
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'valued customer';
 
-  const prompt = `You are the owner of "${businessName}". Write an authentic, highly personalized 2-sentence response to ${cleanName} who left a ${starRating}-star review: "${cleanComment}".
+  const prompt = `You are the owner of "${businessName}". Write a professional response to ${cleanName} who left a ${starRating}-star review: "${cleanComment}".
 
-STRICT RULES:
-1. You MUST explicitly reference specific words or details from their review comment.
-2. Write EXACTLY 2 natural sentences. Sentence 1 thanks them and references their specific review details. Sentence 2 reaffirms commitment and invites them back.
-3. NEVER return template or placeholder phrases. No preambles, quotation marks, or signature lines.`;
+STRICT FORMAT RULES:
+1. Write EXACTLY TWO sentences total. Not one, not three—precisely two sentences.
+2. Sentence 1: Thank them and directly mention specific words from their review.
+3. Sentence 2: Reaffirm your commitment and invite them back.
+4. NO preambles, NO greetings like "Dear", NO quotation marks, NO sign-offs or signatures.`;
 
   let attempts = 0;
   while (attempts < 5) {
@@ -140,7 +142,16 @@ STRICT RULES:
       });
 
       if (response && response.text && response.text.trim().length > 0) {
-        return response.text.trim();
+        let text = response.text.trim().replace(/^["']|["']$/g, '');
+        // Verify sentence count roughly
+        const sentences = text.split(/[.!?]+/).filter(Boolean);
+        if (sentences.length <= 2) {
+          return text;
+        }
+        // If it generated more, take just the first 2 sentences
+        if (sentences.length > 2) {
+          return `${sentences[0].trim()}. ${sentences[1].trim()}.`;
+        }
       }
     } catch (err) {
       console.warn(`Gemini AI Attempt ${attempts + 1} notice:`, err.message);
@@ -148,7 +159,7 @@ STRICT RULES:
     attempts++;
     await new Promise(r => setTimeout(r, 600));
   }
-  return '';
+  return `Thank you so much for the ${starRating}-star review, ${reviewerName}! We look forward to seeing you again soon.`;
 }
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
@@ -504,4 +515,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-          
+      
