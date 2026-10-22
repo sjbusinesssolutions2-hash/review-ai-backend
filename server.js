@@ -164,34 +164,35 @@ async function fetchLocationReviews(accessToken, accountName, locationName) {
 
 // AI Generator with single fast pass (NO infinite loops)
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
+  const cleanComment = comment && comment.trim() !== '' ? comment : 'Great service!';
+  const cleanName = reviewerName && reviewerName.trim() !== '' ? reviewerName : 'valued customer';
+
   const prompt = `
-    You are an expert business reputation manager writing an authentic response on behalf of "${businessName}".
-    Customer Name: "${reviewerName || 'Valued Customer'}"
-    Star Rating: ${starRating}/5 stars
-    Customer Review: "${comment || 'Great experience!'}"
+You are the business owner of "${businessName}". 
+Write an authentic, highly tailored response to ${cleanName} who left a ${starRating}-star review saying: "${cleanComment}".
 
-    STRICT GUIDELINES:
-    1. Write EXACTLY 2 natural, warm, and professional sentences.
-    2. Sentence 1: Thank the customer by name and acknowledge their review or visit.
-    3. Sentence 2: Reaffirm your commitment to excellence and welcome them back.
-    4. Do not include intro filler, tags, or preambles.
-  `;
+STRICT RULES:
+1. Output EXACTLY 2 natural sentences. Line 1 thanks them and references their specific comment. Line 2 reaffirms commitment and welcomes them back.
+2. Absolutely NO quotation marks, preambles, or intro text.
+`;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt
-    });
+  while (true) {
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt
+      });
 
-    if (response && response.text) {
-      return response.text.trim();
+      if (response && response.text && response.text.trim().length > 0) {
+        return response.text.trim();
+      }
+    } catch (err) {
+      // Silent loop retry on network or model hiccup
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
-  } catch (err) {
-    console.warn('Gemini AI draft generation notice:', err.message);
   }
-
-  return `Thank you ${reviewerName || ''} for taking the time to share your review! We appreciate your support and look forward to serving you again soon.`;
 }
+
 
 // --- AUTH ROUTES ---
 app.get('/auth/google', passport.authenticate('google', {
