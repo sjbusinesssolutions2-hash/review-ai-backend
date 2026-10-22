@@ -125,18 +125,17 @@ async function generate2LineAIReply(businessName, reviewerName, starRating, comm
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim().split(' ')[0] : 'customer';
 
-  const prompt = `Write a genuine, highly specific owner response to this Google review for "${businessName}".
+    const prompt = `Write an extremely concise, professional 2-sentence owner response to this Google review for "${businessName}".
 
 Reviewer: ${cleanName}
 Rating: ${starRating} Stars
 Customer Comment: "${cleanComment}"
 
 RULES:
-1. Write EXACTLY TWO professional sentences.
-2. Sentence 1 MUST mention exact details from their comment (e.g. specific bat count, repair work, time turnaround, or specific person mentioned).
-3. Sentence 2 MUST offer a polite, professional closing or welcome back.
-4. DO NOT use generic template responses. Write uniquely for this review only.
-5. No preambles, no greetings like "Dear", no quotes, no sign-offs.`;
+1. Write EXACTLY TWO short sentences.
+2. Sentence 1: A brief thank you mentioning a specific detail from their comment.
+3. Sentence 2: A warm, short welcome back.
+4. Keep it punchy and under 25 words total. No quotes, no sign-offs.`;
 
   let attempts = 0;
   while (attempts < 3) {
