@@ -9,7 +9,6 @@ const cors = require('cors');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const session = require('express-session');
-const MongoStore = require('connect-mongo');
 const { google } = require('googleapis');
 const { GoogleGenAI } = require('@google/genai');
 require('dotenv').config();
@@ -17,10 +16,10 @@ require('dotenv').config();
 const app = express();
 app.set('trust proxy', 1);
 
-app.use(express.json());
-app.use(cors({
-  origin: ['https://sjbusinesssolutions2-hash.github.io', 'http://localhost:3000'],
-  credentials: true
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'sjbs_ai_production_secret',
+  resave: false,
+  saveUninitialized: false
 }));
 
 const MONGO_URI = process.env.MONGO_URI;
