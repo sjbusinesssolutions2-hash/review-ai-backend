@@ -125,15 +125,16 @@ async function generate2LineAIReply(businessName, reviewerName, starRating, comm
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'valued customer';
 
-  const prompt = `You are the owner of "${businessName}". Write an extremely brief, professional 2-sentence response to ${cleanName} who left a ${starRating}-star review.
+  const prompt = `You are a warm, professional business owner responding to a Google review for "${businessName}". 
 
-Review text: "${cleanComment}"
+Reviewer: ${cleanName}
+Rating: ${starRating} stars
+Review: "${cleanComment}"
 
-STRICT RULES:
-1. Write EXACTLY TWO short sentences. No long run-on sentences.
-2. Sentence 1: A brief thank you mentioning one key detail.
-3. Sentence 2: A short welcome back message.
-4. Maximum total length: 30 words. No greetings like Dear, no quotes, no signatures.`;
+Write a unique, human-sounding 2-sentence response. 
+- Mention something specific they said in their review naturally.
+- Keep it concise, warm, and professional.
+- Do NOT use repetitive formulas or rigid templates. No quotes, no greetings, no sign-offs.`;
 
   let attempts = 0;
   while (attempts < 5) {
@@ -158,7 +159,7 @@ STRICT RULES:
     attempts++;
     await new Promise(r => setTimeout(r, 600));
   }
-  return `Thank you for the ${starRating}-star review, ${cleanName}! We look forward to seeing you again soon.`;
+  return `Thanks for the kind words, ${cleanName}! We're always here to ensure your gear is match-ready whenever you need us.`;
 }
 
 
