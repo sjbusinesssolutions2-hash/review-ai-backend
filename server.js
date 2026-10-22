@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Multi-Location GBP Sync, Resilient Gemini 3.8 Flash Engine
+ * Multi-Location GBP Sync, Multi-Key AQ. Gemini Engine
  */
 
 const express = require('express');
@@ -31,7 +31,24 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// Parse multiple AQ. keys from environment variable
+const rawKeysInput = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
+const geminiKeys = rawKeysInput
+  .split(',')
+  .map(k => k.trim())
+  .filter(k => k.startsWith('AQ.'));
+
+let currentKeyIndex = 0;
+
+function getNextGeminiClient() {
+  if (geminiKeys.length === 0) {
+    console.error('CRITICAL: No valid AQ. Gemini API keys found in environment variables.');
+    return null;
+  }
+  const key = geminiKeys[currentKeyIndex];
+  currentKeyIndex = (currentKeyIndex + 1) % geminiKeys.length;
+  return new GoogleGenAI({ apiKey: key });
+}
 
 const MONGO_URI = process.env.MONGO_URI;
 mongoose.connect(MONGO_URI, {
@@ -120,8 +137,10 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Resilient AI Engine with Exponential Backoff & Non-Formulaic Prompting
+// Resilient Multi-Key Rotation AI Engine
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
+  if (geminiKeys.length === 0) return null;
+
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim().split(' ')[0] : 'customer';
 
@@ -137,10 +156,16 @@ Instructions:
 3. Do NOT follow a fixed formula or template. Speak like a genuine person writing a unique message on the spot, referencing specific details from their review.
 4. Avoid repetitive sign-offs, quotes, or preambles.`;
 
-  let attempt = 0;
-  while (attempt < 4) {
+  // Try rotating through keys across multiple attempts
+  let attempts = 0;
+  const maxAttempts = Math.min(geminiKeys.length * 2, 6);
+
+  while (attempts < maxAttempts) {
+    const aiClient = getNextGeminiClient();
+    if (!aiClient) break;
+
     try {
-      const response = await ai.models.generateContent({
+      const response = await aiClient.models.generateContent({
         model: 'gemini-3.8-flash',
         contents: prompt
       });
@@ -164,16 +189,14 @@ Instructions:
         return cleanText;
       }
     } catch (err) {
-      console.warn(`Gemini API Warning [Attempt ${attempt + 1}]:`, err.message);
+      console.warn(`Gemini API Key Rotation Warning (Attempt ${attempts + 1}):`, err.message);
     }
 
-    attempt++;
-    // Generous exponential backoff to clear 503 high-demand traffic spikes safely
-    const backoffDelay = Math.min(2000 * Math.pow(1.8, attempt), 8000) + Math.random() * 500;
-    await new Promise(r => setTimeout(r, backoffDelay));
+    attempts++;
+    await new Promise(r => setTimeout(r, 600));
   }
 
-  throw new Error('AI generation temporarily unavailable due to high model demand.');
+  return null;
 }
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
@@ -397,8 +420,6 @@ app.get('/api/reviews/all', async (req, res) => {
       console.warn('Reviews API fetch notice:', err.message);
     }
 
-    user.savedDrafts = (user.savedDrafts || []).filter(d => !d.draftText.includes("taking the time") && !d.draftText.includes("match-ready"));
-
     const unreplied = rawReviews.filter(r => !r.reply && !user.usedFreeDraftReviewIds.includes(r.reviewId));
     const remainingSlots = Math.max(0, 2 - user.usedFreeDraftReviewIds.length);
     const eligibleForDraft = unreplied.slice(0, remainingSlots);
@@ -417,14 +438,15 @@ app.get('/api/reviews/all', async (req, res) => {
           aiDraftReply = existingDraft.draftText;
         } else {
           try {
-            aiDraftReply = await generate2LineAIReply(
+            const generated = await generate2LineAIReply(
               targetBusinessName,
               item.reviewerName,
               item.starRating,
               item.comment
             );
 
-            if (aiDraftReply) {
+            if (generated) {
+              aiDraftReply = generated;
               user.savedDrafts.push({
                 reviewId: item.reviewId,
                 draftText: aiDraftReply
@@ -432,7 +454,7 @@ app.get('/api/reviews/all', async (req, res) => {
               userModified = true;
             }
           } catch (aiErr) {
-            console.error('AI Generation Notice for review:', item.reviewId, aiErr.message);
+            console.error('AI generation skipped gracefully for review:', item.reviewId, aiErr.message);
           }
         }
       }
@@ -535,4 +557,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-          
+      
