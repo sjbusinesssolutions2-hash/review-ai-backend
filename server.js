@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Multi-Location GBP Sync, Strict Persistent Gemini AI Retry Engine
+ * Multi-Location GBP Sync, Strict Gemini AI Task Engine
  */
 
 const express = require('express');
@@ -120,15 +120,15 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Strict Persistent Retry Engine using gemini-2.5-flash
+// Strictly Dynamic Gemini Generator using gemini-2.5-flash
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'valued customer';
 
-  const prompt = `You are the owner of "${businessName}". Write an authentic, highly personalized 2-sentence response to ${cleanName} who left a ${starRating}-star review: "${cleanComment}".
+  const prompt = `You are the owner of "${businessName}". Write an authentic, highly personalized 2-sentence response to ${cleanName} who left a${starRating}-star review: "${cleanComment}".
 
 STRICT RULES:
-1. You MUST explicitly reference specific words or details from their review comment (e.g., equipment, repair work, staff, bat repairs, etc.).
+1. You MUST explicitly reference specific words or details from their review comment (e.g. equipment, repair work, staff, bat repairs, etc.).
 2. Write EXACTLY 2 natural sentences. Sentence 1 thanks them and references their specific review details. Sentence 2 reaffirms commitment and invites them back.
 3. NEVER return template or placeholder phrases. No preambles, quotation marks, or signature lines.`;
 
@@ -420,7 +420,7 @@ app.get('/api/reviews/all', async (req, res) => {
     }
 
     const needsReplyCount = processedReviews.filter(r => !r.reply).length;
-    const repliedCount = processedReviews.filter(r => r.reply).length;
+    constrepliedCount = processedReviews.filter(r => r.reply).length;
 
     res.json({
       reviews: processedReviews,
@@ -507,4 +507,3 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-        
