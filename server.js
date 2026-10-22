@@ -120,7 +120,6 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Gemini AI Call with gemini-3.8-flash
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'valued customer';
@@ -128,12 +127,12 @@ async function generate2LineAIReply(businessName, reviewerName, starRating, comm
   const prompt = `You are the owner of "${businessName}". Write an authentic, highly personalized 2-sentence response to ${cleanName} who left a ${starRating}-star review: "${cleanComment}".
 
 STRICT RULES:
-1. You MUST explicitly reference specific words or details from their review comment (e.g. equipment, repair work, staff, bat repairs, etc.).
+1. You MUST explicitly reference specific words or details from their review comment.
 2. Write EXACTLY 2 natural sentences. Sentence 1 thanks them and references their specific review details. Sentence 2 reaffirms commitment and invites them back.
 3. NEVER return template or placeholder phrases. No preambles, quotation marks, or signature lines.`;
 
   let attempts = 0;
-  while (attempts < 10) {
+  while (attempts < 5) {
     try {
       const response = await ai.models.generateContent({
         model: 'gemini-3.8-flash',
@@ -373,10 +372,6 @@ app.get('/api/reviews/all', async (req, res) => {
       console.warn('Reviews API fetch notice:', err.message);
     }
 
-    user.savedDrafts = (user.savedDrafts || []).filter(d => 
-      !d.draftText.includes("taking the time to share your feedback")
-    );
-
     const unreplied = rawReviews.filter(r => !r.reply && !user.usedFreeDraftReviewIds.includes(r.reviewId));
     const remainingSlots = Math.max(0, 2 - user.usedFreeDraftReviewIds.length);
     const eligibleForDraft = unreplied.slice(0, remainingSlots);
@@ -391,7 +386,7 @@ app.get('/api/reviews/all', async (req, res) => {
       if (!item.reply && eligibleIds.includes(item.reviewId)) {
         let existingDraft = user.savedDrafts.find(d => d.reviewId === item.reviewId);
 
-        if (existingDraft && existingDraft.draftText && !existingDraft.draftText.includes("taking the time to share")) {
+        if (existingDraft && existingDraft.draftText) {
           aiDraftReply = existingDraft.draftText;
         } else {
           aiDraftReply = await generate2LineAIReply(
@@ -509,4 +504,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-      
+          
