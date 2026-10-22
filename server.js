@@ -120,7 +120,7 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Helper: Helper to query reviews cleanly across Owner and Manager scopes
+// Helper: Query reviews cleanly
 async function fetchLocationReviews(accessToken, accountName, locationName) {
   try {
     let parentPath = locationName;
@@ -157,15 +157,15 @@ async function fetchLocationReviews(accessToken, accountName, locationName) {
       };
     }
   } catch (err) {
-    console.warn(`Fetch reviews error for ${locationName}:`, err.message);
+    console.warn(`Fetch reviews notice for ${locationName}:`, err.message);
   }
   return { reviews: [], reviewCount: 0, rating: 5.0, parentPath: locationName };
 }
 
-// AI Generator
+// AI Generator with single fast pass (NO infinite loops)
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   const prompt = `
-    You are an expert business reputation manager writing an authentic, warm response on behalf of "${businessName}".
+    You are an expert business reputation manager writing an authentic response on behalf of "${businessName}".
     Customer Name: "${reviewerName || 'Valued Customer'}"
     Star Rating: ${starRating}/5 stars
     Customer Review: "${comment || 'Great experience!'}"
@@ -177,26 +177,20 @@ async function generate2LineAIReply(businessName, reviewerName, starRating, comm
     4. Do not include intro filler, tags, or preambles.
   `;
 
-  let success = false;
-  let replyText = '';
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt
+    });
 
-  while (!success) {
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt
-      });
-
-      if (response && response.text) {
-        replyText = response.text.trim();
-        if (replyText.length > 0) success = true;
-      }
-    } catch (err) {
-      await new Promise(res => setTimeout(res, 2000));
+    if (response && response.text) {
+      return response.text.trim();
     }
+  } catch (err) {
+    console.warn('Gemini AI draft generation notice:', err.message);
   }
 
-  return replyText;
+  return `Thank you ${reviewerName || ''} for taking the time to share your review! We appreciate your support and look forward to serving you again soon.`;
 }
 
 // --- AUTH ROUTES ---
@@ -337,7 +331,7 @@ app.get('/api/businesses', async (req, res) => {
   }
 });
 
-// Fetch All Google Reviews with Dynamic Account Discovery & Tab Metrics
+// Fetch All Google Reviews with Fast Single-Pass Processing
 app.get('/api/reviews/all', async (req, res) => {
   const { userId, businessId } = req.query;
 
@@ -353,41 +347,9 @@ app.get('/api/reviews/all', async (req, res) => {
 
     const targetLocation = (user.locations || []).find(l => l.locationId === businessId);
     const targetBusinessName = targetLocation ? targetLocation.locationName : 'Our Business';
+    const parentPath = targetLocation && targetLocation.accountLocationPath ? targetLocation.accountLocationPath : businessId;
 
     let rawReviews = [];
-    let parentPath = targetLocation && targetLocation.accountLocationPath ? targetLocation.accountLocationPath : null;
-
-    if (!parentPath) {
-      try {
-        const accountsRes = await fetch('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', {
-          headers: { 'Authorization': `Bearer ${user.accessToken}` }
-        });
-        if (accountsRes.ok) {
-          const accountsData = await accountsRes.json();
-          const accounts = accountsData.accounts || [];
-          
-          for (const acc of accounts) {
-            const locsRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${acc.name}/locations`, {
-              headers: { 'Authorization': `Bearer ${user.accessToken}` }
-            });
-            if (locsRes.ok) {
-              const locsData = await locsRes.json();
-              const match = (locsData.locations || []).find(l => l.name.includes(businessId));
-              if (match) {
-                parentPath = match.name;
-                break;
-              }
-            }
-          }
-        }
-      } catch (discErr) {
-        console.warn('Dynamic location discovery notice:', discErr.message);
-      }
-    }
-
-    if (!parentPath) {
-      parentPath = `locations/${businessId}`;
-    }
 
     try {
       const response = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
@@ -414,6 +376,7 @@ app.get('/api/reviews/all', async (req, res) => {
       console.warn('Reviews API fetch notice:', err.message);
     }
 
+    // Process Gemini AI drafts with single-pass speed
     const processedReviews = await Promise.all(
       rawReviews.map(async (item) => {
         let aiDraftReply = '';
@@ -449,7 +412,7 @@ app.get('/api/reviews/all', async (req, res) => {
   }
 });
 
-// Post or Update Review Reply Live on Google Business Profile
+// Post Reply Live
 app.post('/api/reviews/reply', async (req, res) => {
   const { userId, businessId, reviewId, replyText } = req.body;
 
@@ -464,17 +427,9 @@ app.post('/api/reviews/reply', async (req, res) => {
     }
 
     const targetLocation = (user.locations || []).find(l => l.locationId === businessId);
-    let parentPath = targetLocation && targetLocation.accountLocationPath ? targetLocation.accountLocationPath : null;
+    const parentPath = targetLocation && targetLocation.accountLocationPath ? targetLocation.accountLocationPath : businessId;
 
-    // Fallback path if missing
-    if (!parentPath) {
-      parentPath = `locations/${businessId}`;
-    }
-
-    // Google API update/create reply endpoint
-    const updateUrl = `https://mybusiness.googleapis.com/v4/${parentPath}/reviews/${reviewId}/reply`;
-
-    const googleRes = await fetch(updateUrl, {
+    const googleRes = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews/${reviewId}/reply`, {
       method: 'PUT',
       headers: {
         'Authorization': `Bearer ${user.accessToken}`,
@@ -492,108 +447,8 @@ app.post('/api/reviews/reply', async (req, res) => {
       return res.status(googleRes.status).json({ error: 'Failed to post reply to Google Business Profile' });
     }
   } catch (err) {
-    console.error('Error posting/editing review reply:', err.message);
-    res.status(500).json({ error: 'Server error updating review reply' });
-  }
-});
-
-
-// Fetch Unreplied Google Reviews & Generate Gemini AI Drafts
-app.get('/api/reviews/unreplied', async (req, res) => {
-  const { userId, businessId } = req.query;
-
-  try {
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const targetLocation = (user.locations || []).find(l => l.locationId === businessId);
-    const targetBusinessName = targetLocation ? targetLocation.locationName : 'Our Business';
-    const parentPath = targetLocation && targetLocation.accountLocationPath ? targetLocation.accountLocationPath : businessId;
-
-    let rawReviews = [];
-
-    if (user.accessToken && parentPath) {
-      try {
-        const response = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
-          headers: {
-            'Authorization': `Bearer ${user.accessToken}`,
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          const fetchedReviews = data.reviews || [];
-          rawReviews = fetchedReviews.filter(r => !r.reviewReply).map(r => ({
-            reviewId: r.reviewId,
-            reviewerName: (r.reviewer && r.reviewer.displayName) ? r.reviewer.displayName : 'Google User',
-            starRating: r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : r.starRating === 'THREE' ? 3 : r.starRating === 'TWO' ? 2 : 1,
-            comment: r.comment || ''
-          }));
-        }
-      } catch (err) {
-        console.warn('Unreplied fetch notice:', err.message);
-      }
-    }
-
-    const processedReviews = await Promise.all(
-      rawReviews.map(async (item) => {
-        const aiDraftReply = await generate2LineAIReply(
-          targetBusinessName,
-          item.reviewerName,
-          item.starRating,
-          item.comment
-        );
-
-        return {
-          reviewId: item.reviewId,
-          reviewerName: item.reviewerName,
-          starRating: item.starRating,
-          comment: item.comment,
-          aiDraftReply: aiDraftReply
-        };
-      })
-    );
-
-    res.json(processedReviews);
-  } catch (err) {
-    console.error('Error fetching unreplied reviews:', err.message);
-    res.status(500).json({ error: 'Server error fetching unreplied reviews' });
-  }
-});
-
-// Post Reply Live
-app.post('/api/reviews/reply', async (req, res) => {
-  const { userId, businessId, reviewId, replyText } = req.body;
-
-  if (!replyText || replyText.trim() === '') {
-    return res.status(400).json({ error: 'Reply text cannot be empty' });
-  }
-
-  try {
-    const user = await User.findById(userId);
-    const targetLocation = (user.locations || []).find(l => l.locationId === businessId);
-    const parentPath = targetLocation && targetLocation.accountLocationPath ? targetLocation.accountLocationPath : businessId;
-
-    if (user && user.accessToken && parentPath) {
-      try {
-        const oauth2Client = new google.auth.OAuth2();
-        oauth2Client.setCredentials({ access_token: user.accessToken });
-        const mybusinessreviews = google.mybusinessreviews({ version: 'v1', auth: oauth2Client });
-
-        await mybusinessreviews.accounts.locations.reviews.updateReply({
-          name: `${parentPath}/reviews/${reviewId}/reply`,
-          requestBody: { comment: replyText }
-        });
-      } catch (gmbErr) {
-        console.warn('GMB Live Post notice:', gmbErr.message);
-      }
-    }
-
-    res.json({ success: true, message: 'Reply posted successfully' });
-  } catch (err) {
     console.error('Error posting review reply:', err.message);
-    res.status(500).json({ error: 'Failed to post reply' });
+    res.status(500).json({ error: 'Server error updating review reply' });
   }
 });
 
@@ -601,4 +456,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Enterprise Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-      
+          
