@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Multi-Location GBP Sync, Strict 2-Sentence Gemini AI Engine
+ * Multi-Location GBP Sync, Gemini 2.5 Flash Engine
  */
 
 const express = require('express');
@@ -120,48 +120,59 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Strict 2-Sentence Response Generator
+// Dynamic Professional 2-Sentence Reply Engine
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
-  const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'valued customer';
+  const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim().split(' ')[0] : 'customer';
 
-  const prompt = `You are a warm, professional business owner responding to a Google review for "${businessName}". 
+  const prompt = `Write a genuine, highly specific owner response to this Google review for "${businessName}".
 
 Reviewer: ${cleanName}
-Rating: ${starRating} stars
-Review: "${cleanComment}"
+Rating: ${starRating} Stars
+Customer Comment: "${cleanComment}"
 
-Write a unique, human-sounding 2-sentence response. 
-- Mention something specific they said in their review naturally.
-- Keep it concise, warm, and professional.
-- Do NOT use repetitive formulas or rigid templates. No quotes, no greetings, no sign-offs.`;
+RULES:
+1. Write EXACTLY TWO professional sentences.
+2. Sentence 1 MUST mention exact details from their comment (e.g. specific bat count, repair work, time turnaround, or specific person mentioned).
+3. Sentence 2 MUST offer a polite, professional closing or welcome back.
+4. DO NOT use generic phrases like "thanks for the kind words" or template responses. Write uniquely for this review only.
+5. No preambles, no greetings like "Dear", no quotes, no sign-offs.`;
 
   let attempts = 0;
-  while (attempts < 5) {
+  while (attempts < 3) {
     try {
       const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-2.5-flash',
         contents: prompt
       });
 
-      if (response && response.text && response.text.trim().length > 0) {
-        let text = response.text.trim().replace(/^["']|["']$/g, '');
-        const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+      let responseText = '';
+      if (typeof response.text === 'string') {
+        responseText = response.text;
+      } else if (response.candidates && response.candidates[0] && response.candidates[0].content) {
+        responseText = response.candidates[0].content.parts.map(p => p.text).join('');
+      }
+
+      if (responseText && responseText.trim().length > 0) {
+        let cleanText = responseText.trim().replace(/^["']|["']$/g, '');
+        const sentences = cleanText.match(/[^.!?]+[.!?]+/g);
         
-        if (sentences.length >= 2) {
+        if (sentences && sentences.length >= 2) {
           return `${sentences[0].trim()} ${sentences[1].trim()}`;
+        } else if (sentences && sentences.length === 1) {
+          return `${sentences[0].trim()} We look forward to serving you again soon.`;
         }
-        return text;
+        return cleanText;
       }
     } catch (err) {
-      console.warn(`Gemini AI Attempt ${attempts + 1} notice:`, err.message);
+      console.error(`Gemini API Attempt ${attempts + 1} Error:`, err.message);
     }
     attempts++;
-    await new Promise(r => setTimeout(r, 600));
+    await new Promise(r => setTimeout(r, 1000));
   }
-  return `Thanks for the kind words, ${cleanName}! We're always here to ensure your gear is match-ready whenever you need us.`;
-}
 
+  return `Thank you ${cleanName} for taking the time to leave us a ${starRating}-star review! We appreciate your feedback and look forward to serving you again.`;
+}
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
   try {
@@ -384,11 +395,8 @@ app.get('/api/reviews/all', async (req, res) => {
       console.warn('Reviews API fetch notice:', err.message);
     }
 
-    // Automatically flush any old long drafts so they get regenerated clean
-    user.savedDrafts = (user.savedDrafts || []).filter(d => {
-      const sentenceCount = (d.draftText.match(/[^.!?]+[.!?]+/g) || []).length;
-      return sentenceCount <= 2;
-    });
+    // Clear out fallback text drafts so clean ones are generated
+    user.savedDrafts = (user.savedDrafts || []).filter(d => !d.draftText.includes("taking the time to leave us a"));
 
     const unreplied = rawReviews.filter(r => !r.reply && !user.usedFreeDraftReviewIds.includes(r.reviewId));
     const remainingSlots = Math.max(0, 2 - user.usedFreeDraftReviewIds.length);
@@ -522,4 +530,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-    
+                
