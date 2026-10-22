@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Enterprise Multi-Location GBP Sync, Authentic Fast Gemini AI Replies
+ * Multi-Location GBP Sync, Gemini AI Free Tier Task Engine
  */
 
 const express = require('express');
@@ -31,10 +31,8 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Initialize Gemini AI Engine
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// Connect to MongoDB Atlas
 const MONGO_URI = process.env.MONGO_URI;
 mongoose.connect(MONGO_URI, {
   useNewUrlParser: true,
@@ -43,7 +41,6 @@ mongoose.connect(MONGO_URI, {
 .then(() => console.log('MongoDB Atlas Connected'))
 .catch(err => console.error('MongoDB Connection Error:', err));
 
-// User Schema
 const userSchema = new mongoose.Schema({
   googleId: String,
   displayName: String,
@@ -71,7 +68,6 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
-// Extract real personal name strictly from Google profile payload
 function extractPersonalName(profile) {
   if (profile._json && profile._json.given_name) {
     const family = profile._json.family_name ? ` ${profile._json.family_name}` : '';
@@ -80,7 +76,6 @@ function extractPersonalName(profile) {
   return profile.displayName || 'User Account';
 }
 
-// Passport Strategy
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
@@ -125,12 +120,12 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Fast, Authentic 2-Line Gemini AI Generator (Max 3.5s execution window, no infinite loops)
+// Authentic 2-Line Gemini AI Generator
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim() : 'valued customer';
 
-  const prompt = `You are the owner of "${businessName}". Write a 2-sentence reply to ${cleanName} who left a ${starRating}-star review: "${cleanComment}". Mention specific words from their review. Line 1 thanks them referencing their comment. Line 2 invites them back. No quotes, intro, or signatures.`;
+  const prompt = `You are the owner of "${businessName}". Write a short, warm 2-sentence response to ${cleanName} who left a ${starRating}-star review: "${cleanComment}". Line 1 thanks them and mentions details from their review (like bat repair, service, etc.). Line 2 invites them back. Do not use quotes or intro labels.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -142,13 +137,12 @@ async function generate2LineAIReply(businessName, reviewerName, starRating, comm
       return response.text.trim();
     }
   } catch (err) {
-    console.warn('Gemini draft generation notice:', err.message);
+    console.warn('Gemini generation notice:', err.message);
   }
 
-  return '';
+  return `Thank you ${cleanName} for taking the time to share your feedback! We're glad you had a great experience with us and look forward to serving you again soon.`;
 }
 
-// Fetch Location Reviews Helper
 async function fetchLocationReviews(accessToken, accountName, locationName) {
   try {
     let parentPath = locationName;
@@ -190,7 +184,6 @@ async function fetchLocationReviews(accessToken, accountName, locationName) {
   return { reviews: [], reviewCount: 0, rating: 5.0, parentPath: locationName };
 }
 
-// --- AUTH ROUTES ---
 app.get('/auth/google', passport.authenticate('google', {
   scope: [
     'profile',
@@ -284,7 +277,6 @@ app.get('/api/user', async (req, res) => {
   }
 });
 
-// Fetch Business Profiles
 app.get('/api/businesses', async (req, res) => {
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: 'Missing userId' });
@@ -328,7 +320,7 @@ app.get('/api/businesses', async (req, res) => {
   }
 });
 
-// Fetch All Reviews Fast
+// Fetch All Reviews & Guarantee 2 Free AI Reply Tasks
 app.get('/api/reviews/all', async (req, res) => {
   const { userId, businessId } = req.query;
 
@@ -340,13 +332,6 @@ app.get('/api/reviews/all', async (req, res) => {
     const user = await User.findById(userId);
     if (!user || !user.accessToken) {
       return res.status(401).json({ error: 'User or access token not found' });
-    }
-
-    // Auto-clear stale fallback strings automatically from MongoDB
-    if (user.savedDrafts && user.savedDrafts.some(d => d.draftText.includes("taking the time to share") || d.draftText.includes("for your review!"))) {
-      user.savedDrafts = [];
-      user.usedFreeDraftReviewIds = [];
-      await user.save();
     }
 
     const targetLocation = (user.locations || []).find(l => l.locationId === businessId);
@@ -380,11 +365,14 @@ app.get('/api/reviews/all', async (req, res) => {
       console.warn('Reviews API fetch notice:', err.message);
     }
 
+    // Filter unreplied reviews that have NOT been processed or dismissed
     const unreplied = rawReviews.filter(r => !r.reply && !user.usedFreeDraftReviewIds.includes(r.reviewId));
-    const usedCount = user.usedFreeDraftReviewIds.length;
-    const remainingDraftSlots = Math.max(0, 2 - usedCount);
 
-    const eligibleForDraft = unreplied.slice(0, remainingDraftSlots);
+    // Allocate up to 2 free draft slots
+    const usedCount = user.usedFreeDraftReviewIds.length;
+    const remainingSlots = Math.max(0, 2 - usedCount);
+
+    const eligibleForDraft = unreplied.slice(0, remainingSlots);
     const eligibleIds = eligibleForDraft.map(r => r.reviewId);
 
     let userModified = false;
@@ -406,13 +394,11 @@ app.get('/api/reviews/all', async (req, res) => {
               item.comment
             );
 
-            if (aiDraftReply) {
-              user.savedDrafts.push({
-                reviewId: item.reviewId,
-                draftText: aiDraftReply
-              });
-              userModified = true;
-            }
+            user.savedDrafts.push({
+              reviewId: item.reviewId,
+              draftText: aiDraftReply
+            });
+            userModified = true;
           }
         }
 
@@ -444,7 +430,7 @@ app.get('/api/reviews/all', async (req, res) => {
   }
 });
 
-// Dismiss Task
+// Dismiss Task / Close Box
 app.post('/api/reviews/dismiss', async (req, res) => {
   const { userId, reviewId } = req.body;
   if (!userId || !reviewId) return res.status(400).json({ error: 'Missing parameters' });
@@ -517,3 +503,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+      
