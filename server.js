@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Multi-Location GBP Sync, Gemini 2.5 Flash Engine
+ * Multi-Location GBP Sync, Gemini 3.8 Flash Task Engine
  */
 
 const express = require('express');
@@ -135,14 +135,14 @@ RULES:
 1. Write EXACTLY TWO professional sentences.
 2. Sentence 1 MUST mention exact details from their comment (e.g. specific bat count, repair work, time turnaround, or specific person mentioned).
 3. Sentence 2 MUST offer a polite, professional closing or welcome back.
-4. DO NOT use generic phrases like "thanks for the kind words" or template responses. Write uniquely for this review only.
+4. DO NOT use generic template responses. Write uniquely for this review only.
 5. No preambles, no greetings like "Dear", no quotes, no sign-offs.`;
 
   let attempts = 0;
   while (attempts < 3) {
     try {
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.8-flash',
         contents: prompt
       });
 
@@ -171,7 +171,7 @@ RULES:
     await new Promise(r => setTimeout(r, 1000));
   }
 
-  return `Thank you ${cleanName} for taking the time to leave us a ${starRating}-star review! We appreciate your feedback and look forward to serving you again.`;
+  return `Thank you ${cleanName} for your ${starRating}-star review of ${businessName}! We appreciate your support and look forward to welcoming you back.`;
 }
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
@@ -395,7 +395,7 @@ app.get('/api/reviews/all', async (req, res) => {
       console.warn('Reviews API fetch notice:', err.message);
     }
 
-    // Clear out fallback text drafts so clean ones are generated
+    // Automatically purge old fallback drafts so Gemini generates real responses
     user.savedDrafts = (user.savedDrafts || []).filter(d => !d.draftText.includes("taking the time to leave us a"));
 
     const unreplied = rawReviews.filter(r => !r.reply && !user.usedFreeDraftReviewIds.includes(r.reviewId));
@@ -530,4 +530,4 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-                
+            
