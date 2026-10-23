@@ -405,44 +405,46 @@ app.get('/api/reviews/all', async (req, res) => {
     }
 
     let userModified = false;
-    const processedReviews = [];
 
-    for (const item of rawReviews) {
-      let aiDraftReply = '';
+    // Process all unreplied reviews concurrently in parallel
+    const processedReviews = await Promise.all(
+      rawReviews.map(async (item) => {
+        let aiDraftReply = '';
 
-      if (!item.reply) {
-        let existingDraft = user.savedDrafts.find(d => d.reviewId === item.reviewId);
+        if (!item.reply) {
+          let existingDraft = user.savedDrafts.find(d => d.reviewId === item.reviewId);
 
-        if (existingDraft && existingDraft.draftText) {
-          aiDraftReply = existingDraft.draftText;
-        } else {
-          try {
-            const generated = await generate2LineAIReply(
-              targetBusinessName,
-              item.reviewerName,
-              item.starRating,
-              item.comment
-            );
+          if (existingDraft && existingDraft.draftText) {
+            aiDraftReply = existingDraft.draftText;
+          } else {
+            try {
+              const generated = await generate2LineAIReply(
+                targetBusinessName,
+                item.reviewerName,
+                item.starRating,
+                item.comment
+              );
 
-            if (generated) {
-              aiDraftReply = generated;
-              user.savedDrafts.push({
-                reviewId: item.reviewId,
-                draftText: aiDraftReply
-              });
-              userModified = true;
+              if (generated) {
+                aiDraftReply = generated;
+                user.savedDrafts.push({
+                  reviewId: item.reviewId,
+                  draftText: aiDraftReply
+                });
+                userModified = true;
+              }
+            } catch (aiErr) {
+              console.error('AI generation error for review:', item.reviewId, aiErr.message);
             }
-          } catch (aiErr) {
-            console.error('AI generation skipped gracefully for review:', item.reviewId, aiErr.message);
           }
         }
-      }
 
-      processedReviews.push({
-        ...item,
-        aiDraftReply
-      });
-    }
+        return {
+          ...item,
+          aiDraftReply
+        };
+      })
+    );
 
     if (userModified) {
       await user.save();
