@@ -124,8 +124,12 @@ passport.deserializeUser(async (id, done) => {
 });
 
 // Pure Concurrent Multi-Key Dynamic AI Engine
+// High-Speed Concurrent Multi-Key Race Engine with Strict Timeout
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
-  if (geminiKeys.length === 0) return null;
+  if (geminiKeys.length === 0) {
+    console.error('[Gemini AI] No valid AQ. API keys found in environment variables.');
+    return null;
+  }
 
   const cleanComment = (comment && comment.trim() !== '') ? comment.trim() : 'Great service!';
   const cleanName = (reviewerName && reviewerName.trim() !== '') ? reviewerName.trim().split(' ')[0] : 'customer';
@@ -142,46 +146,67 @@ Instructions:
 3. Do NOT follow a fixed formula or template. Speak like a genuine person writing a unique message on the spot, referencing specific details from their review.
 4. Avoid repetitive sign-offs, quotes, or preambles.`;
 
-  const promises = geminiKeys.map(async (key) => {
-    try {
-      const aiClient = new GoogleGenAI({ apiKey: key });
-      const response = await aiClient.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: prompt
-      });
+  console.log(`[Gemini AI] Triggering parallel generation for review by "${cleanName}" across ${geminiKeys.length} keys...`);
 
-      let responseText = '';
-      if (typeof response.text === 'string') {
-        responseText = response.text;
-      } else if (response.candidates && response.candidates[0] && response.candidates[0].content) {
-        responseText = response.candidates[0].content.parts.map(p => p.text).join('');
-      }
+  // Map each key to a racing promise with a strict 6-second timeout
+  const promises = geminiKeys.map(async (key, index) => {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(`Key ${index + 1} timed out after 6 seconds`)), 6000);
+    });
 
-      if (responseText && responseText.trim().length > 0) {
-        let cleanText = responseText.trim().replace(/^["']|["']$/g, '');
-        const sentences = cleanText.match(/[^.!?]+[.!?]+/g);
-        
-        if (sentences && sentences.length >= 2) {
-          return `${sentences[0].trim()} ${sentences[1].trim()}`;
-        } else if (sentences && sentences.length === 1) {
-          return `${sentences[0].trim()}`;
+    const apiPromise = (async () => {
+      try {
+        const aiClient = new GoogleGenAI({ apiKey: key });
+        const response = await aiClient.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: prompt
+        });
+
+        let responseText = '';
+        if (typeof response.text === 'string') {
+          responseText = response.text;
+        } else if (response.candidates && response.candidates[0] && response.candidates[0].content) {
+          responseText = response.candidates[0].content.parts.map(p => p.text).join('');
         }
-        return cleanText;
+
+        if (responseText && responseText.trim().length > 0) {
+          let cleanText = responseText.trim().replace(/^["']|["']$/g, '');
+          const sentences = cleanText.match(/[^.!?]+[.!?]+/g);
+          
+          if (sentences && sentences.length >= 2) {
+            return `${sentences[0].trim()} ${sentences[1].trim()}`;
+          } else if (sentences && sentences.length === 1) {
+            return `${sentences[0].trim()}`;
+          }
+          return cleanText;
+        }
+        throw new Error('Empty response payload');
+      } catch (err) {
+        throw new Error(`Key ${index + 1} failed: ${err.message}`);
       }
-    } catch (err) {
-      return null;
+    })();
+
+    try {
+      const res = await Promise.race([apiPromise, timeoutPromise]);
+      clearTimeout(timeoutId);
+      return res;
+    } catch (e) {
+      clearTimeout(timeoutId);
+      throw e;
     }
-    return null;
   });
 
   try {
     const result = await Promise.any(promises);
+    console.log(`[Gemini AI] SUCCESS: Generated response for "${cleanName}"`);
     return result;
   } catch (aggregateErr) {
-    console.error('All concurrent Gemini keys failed or hit rate limits.');
+    console.error('[Gemini AI] FAILED: All keys failed or timed out:', aggregateErr.errors ? aggregateErr.errors.map(e => e.message) : aggregateErr.message);
     return null;
   }
 }
+
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
   try {
@@ -368,6 +393,7 @@ app.get('/api/reviews/all', async (req, res) => {
   }
 
   try {
+    console.log(`[API /reviews/all] Fetching reviews for User: ${userId}, Business: ${businessId}`);
     const user = await User.findById(userId);
     if (!user || !user.accessToken) {
       return res.status(401).json({ error: 'User or access token not found' });
@@ -399,14 +425,17 @@ app.get('/api/reviews/all', async (req, res) => {
           reply: r.reviewReply ? r.reviewReply.comment : null,
           updateTime: r.updateTime || ''
         }));
+      } else {
+        console.warn(`[API /reviews/all] Google API returned status: ${response.status}`);
       }
     } catch (err) {
-      console.warn('Reviews API fetch notice:', err.message);
+      console.warn('[API /reviews/all] Reviews Google API fetch error:', err.message);
     }
 
     let userModified = false;
 
-    // Process all unreplied reviews concurrently in parallel
+    console.log(`[API /reviews/all] Total reviews fetched: ${rawReviews.length}. Processing unreplied items...`);
+
     const processedReviews = await Promise.all(
       rawReviews.map(async (item) => {
         let aiDraftReply = '';
@@ -416,25 +445,22 @@ app.get('/api/reviews/all', async (req, res) => {
 
           if (existingDraft && existingDraft.draftText) {
             aiDraftReply = existingDraft.draftText;
+            console.log(`[API /reviews/all] Loaded cached MongoDB draft for reviewId: ${item.reviewId}`);
           } else {
-            try {
-              const generated = await generate2LineAIReply(
-                targetBusinessName,
-                item.reviewerName,
-                item.starRating,
-                item.comment
-              );
+            const generated = await generate2LineAIReply(
+              targetBusinessName,
+              item.reviewerName,
+              item.starRating,
+              item.comment
+            );
 
-              if (generated) {
-                aiDraftReply = generated;
-                user.savedDrafts.push({
-                  reviewId: item.reviewId,
-                  draftText: aiDraftReply
-                });
-                userModified = true;
-              }
-            } catch (aiErr) {
-              console.error('AI generation error for review:', item.reviewId, aiErr.message);
+            if (generated) {
+              aiDraftReply = generated;
+              user.savedDrafts.push({
+                reviewId: item.reviewId,
+                draftText: aiDraftReply
+              });
+              userModified = true;
             }
           }
         }
@@ -448,6 +474,7 @@ app.get('/api/reviews/all', async (req, res) => {
 
     if (userModified) {
       await user.save();
+      console.log(`[API /reviews/all] Saved new drafts to MongoDB for user: ${userId}`);
     }
 
     const needsReplyCount = processedReviews.filter(r => !r.reply).length;
@@ -462,7 +489,7 @@ app.get('/api/reviews/all', async (req, res) => {
       }
     });
   } catch (err) {
-    console.error('Error fetching all reviews:', err.message);
+    console.error('[API /reviews/all] CRITICAL ERROR:', err.message);
     res.status(500).json({ error: 'Server error fetching reviews' });
   }
 });
