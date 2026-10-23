@@ -159,9 +159,10 @@ Instructions:
       try {
         const aiClient = new GoogleGenAI({ apiKey: key });
         const response = await aiClient.models.generateContent({
-          model: 'gemini-3.8-flash',
+          model: 'gemini-3.5-flash-lite',
           contents: prompt
         });
+
 
         let responseText = '';
         if (typeof response.text === 'string') {
