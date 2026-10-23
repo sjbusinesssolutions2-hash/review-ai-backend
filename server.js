@@ -11,6 +11,7 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const session = require('express-session');
 const { google } = require('googleapis');
 const { GoogleGenAI } = require('@google/genai');
+const cron = require('node-cron');
 require('dotenv').config();
 
 const app = express();
@@ -52,6 +53,7 @@ const userSchema = new mongoose.Schema({
   accessToken: String,
   refreshToken: String,
   usedFreeDraftReviewIds: { type: [String], default: [] },
+  freeRepliesUsed: { type: Number, default: 0 },
   savedDrafts: [{
     reviewId: String,
     draftText: String
@@ -63,8 +65,8 @@ const userSchema = new mongoose.Schema({
     rating: { type: Number, default: 5.0 },
     reviewCount: { type: Number, default: 0 },
     address: { type: String, default: '' },
-    hasActivePlan: { type: Boolean, default: false },
-    subscriptionStatus: { type: String, default: 'free' }
+    subscriptionStatus: { type: String, default: 'free' },
+    autoReplyEnabled: { type: Boolean, default: true }
   }],
   createdAt: { type: Date, default: Date.now }
 });
@@ -123,10 +125,9 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Pure Concurrent Multi-Key Dynamic AI Engine
-// High-Speed Concurrent Multi-Key Race Engine with Strict Timeout
+// Sequential Key & Model Failover Engine (3.5-flash-lite, 3.5-flash, 3.6-flash)
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
-  if (geminiKeys.length === 0) {
+  if (!geminiKeys || geminiKeys.length === 0) {
     console.error('[Gemini AI] No valid AQ. API keys found in environment variables.');
     return null;
   }
@@ -146,23 +147,23 @@ Instructions:
 3. Do NOT follow a fixed formula or template. Speak like a genuine person writing a unique message on the spot, referencing specific details from their review.
 4. Avoid repetitive sign-offs, quotes, or preambles.`;
 
-  console.log(`[Gemini AI] Triggering parallel generation for review by "${cleanName}" across ${geminiKeys.length} keys...`);
+  const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.6-flash'];
 
-  // Map each key to a racing promise with a strict 6-second timeout
-  const promises = geminiKeys.map(async (key, index) => {
-    let timeoutId;
-    const timeoutPromise = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error(`Key ${index + 1} timed out after 6 seconds`)), 6000);
-    });
+  for (let k = 0; k < geminiKeys.length; k++) {
+    const key = geminiKeys[k];
+    const aiClient = new GoogleGenAI({ apiKey: key });
 
-    const apiPromise = (async () => {
+    for (const model of modelsToTry) {
       try {
-        const aiClient = new GoogleGenAI({ apiKey: key });
-        const response = await aiClient.models.generateContent({
-          model: 'gemini-3.5-flash-lite',
-          contents: prompt
-        });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
 
+        const response = await aiClient.models.generateContent({
+          model: model,
+          contents: prompt,
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
 
         let responseText = '';
         if (typeof response.text === 'string') {
@@ -182,32 +183,15 @@ Instructions:
           }
           return cleanText;
         }
-        throw new Error('Empty response payload');
       } catch (err) {
-        throw new Error(`Key ${index + 1} failed: ${err.message}`);
+        console.warn(`[Gemini AI] Key ${k + 1} with model ${model} failed: ${err.message}. Trying next...`);
       }
-    })();
-
-    try {
-      const res = await Promise.race([apiPromise, timeoutPromise]);
-      clearTimeout(timeoutId);
-      return res;
-    } catch (e) {
-      clearTimeout(timeoutId);
-      throw e;
     }
-  });
-
-  try {
-    const result = await Promise.any(promises);
-    console.log(`[Gemini AI] SUCCESS: Generated response for "${cleanName}"`);
-    return result;
-  } catch (aggregateErr) {
-    console.error('[Gemini AI] FAILED: All keys failed or timed out:', aggregateErr.errors ? aggregateErr.errors.map(e => e.message) : aggregateErr.message);
-    return null;
   }
-}
 
+  console.error('[Gemini AI] All keys and model fallbacks exhausted.');
+  return null;
+}
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
   try {
@@ -249,6 +233,50 @@ async function fetchLocationReviews(accessToken, accountName, locationName) {
   }
   return { reviews: [], reviewCount: 0, rating: 5.0, parentPath: locationName };
 }
+
+// 24/7 Automated Background Auto-Reply Worker for Pro Businesses
+cron.schedule('*/15 * * * *', async () => {
+  console.log('[Auto-Reply Worker] Running periodic check for unanswered reviews across Pro locations...');
+  try {
+    const users = await User.find({ 'locations.subscriptionStatus': 'pro', 'locations.autoReplyEnabled': true });
+
+    for (const user of users) {
+      if (!user.accessToken) continue;
+
+      for (const loc of user.locations) {
+        if (loc.subscriptionStatus !== 'pro' || !loc.autoReplyEnabled) continue;
+
+        const parentPath = loc.accountLocationPath || loc.locationId;
+        const reviewData = await fetchLocationReviews(user.accessToken, parentPath.split('/')[0] + '/' + parentPath.split('/')[1], parentPath);
+        const unreplied = (reviewData.reviews || []).filter(r => !r.reviewReply);
+
+        for (const review of unreplied) {
+          const reviewerName = review.reviewer && review.reviewer.displayName ? review.reviewer.displayName : 'Customer';
+          const starVal = review.starRating === 'FIVE' ? 5 : review.starRating === 'FOUR' ? 4 : review.starRating === 'THREE' ? 3 : review.starRating === 'TWO' ? 2 : 1;
+          
+          const replyText = await generate2LineAIReply(loc.locationName, reviewerName, starVal, review.comment || '');
+
+          if (replyText) {
+            const googleRes = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews/${review.reviewId}/reply`, {
+              method: 'PUT',
+              headers: {
+                'Authorization': `Bearer ${user.accessToken}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ comment: replyText })
+            });
+
+            if (googleRes.ok) {
+              console.log(`[Auto-Reply Worker] Successfully replied automatically for location: ${loc.locationName}`);
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Auto-Reply Worker] Error executing background worker:', err.message);
+  }
+});
 
 app.get('/auth/google', passport.authenticate('google', {
   scope: [
@@ -293,8 +321,8 @@ app.get('/auth/google/callback',
                 rating: reviewData.rating,
                 reviewCount: reviewData.reviewCount,
                 address: loc.storefrontAddress && loc.storefrontAddress.addressLines ? loc.storefrontAddress.addressLines.join(', ') : '',
-                hasActivePlan: idx === 0,
-                subscriptionStatus: idx === 0 ? 'pro' : 'free'
+                subscriptionStatus: idx === 0 ? 'pro' : 'free',
+                autoReplyEnabled: true
               });
             }
           }
@@ -374,8 +402,7 @@ app.get('/api/businesses', async (req, res) => {
         rating: liveRating.toFixed(1),
         reviewCount: liveCount,
         address: loc.address || '',
-        hasActivePlan: idx === 0,
-        subscriptionStatus: idx === 0 ? 'pro' : 'free'
+        subscriptionStatus: loc.subscriptionStatus || (idx === 0 ? 'pro' : 'free')
       });
     }
 
@@ -403,6 +430,7 @@ app.get('/api/reviews/all', async (req, res) => {
     const targetLocation = (user.locations || []).find(l => l.locationId === businessId);
     const targetBusinessName = targetLocation ? targetLocation.locationName : 'Our Business';
     const parentPath = targetLocation && targetLocation.accountLocationPath ? targetLocation.accountLocationPath : businessId;
+    const isPro = targetLocation && targetLocation.subscriptionStatus === 'pro';
 
     let rawReviews = [];
 
@@ -434,6 +462,7 @@ app.get('/api/reviews/all', async (req, res) => {
     }
 
     let userModified = false;
+    let freeRepliesCount = user.freeRepliesUsed || 0;
 
     console.log(`[API /reviews/all] Total reviews fetched: ${rawReviews.length}. Processing unreplied items...`);
 
@@ -448,20 +477,35 @@ app.get('/api/reviews/all', async (req, res) => {
             aiDraftReply = existingDraft.draftText;
             console.log(`[API /reviews/all] Loaded cached MongoDB draft for reviewId: ${item.reviewId}`);
           } else {
-            const generated = await generate2LineAIReply(
-              targetBusinessName,
-              item.reviewerName,
-              item.starRating,
-              item.comment
-            );
+            // Free Tier Gating: Limit free users to generating AI drafts for only 2 reviews
+            let canGenerate = true;
+            if (!isPro) {
+              if (freeRepliesCount >= 2) {
+                canGenerate = false;
+              }
+            }
 
-            if (generated) {
-              aiDraftReply = generated;
-              user.savedDrafts.push({
-                reviewId: item.reviewId,
-                draftText: aiDraftReply
-              });
-              userModified = true;
+            if (canGenerate) {
+              const generated = await generate2LineAIReply(
+                targetBusinessName,
+                item.reviewerName,
+                item.starRating,
+                item.comment
+              );
+
+              if (generated) {
+                aiDraftReply = generated;
+                user.savedDrafts.push({
+                  reviewId: item.reviewId,
+                  draftText: aiDraftReply
+                });
+                userModified = true;
+
+                if (!isPro) {
+                  freeRepliesCount++;
+                  user.freeRepliesUsed = freeRepliesCount;
+                }
+              }
             }
           }
         }
@@ -487,7 +531,9 @@ app.get('/api/reviews/all', async (req, res) => {
         needsYou: needsReplyCount,
         all: processedReviews.length,
         replied: repliedCount
-      }
+      },
+      isPro,
+      freeRepliesUsed: freeRepliesCount
     });
   } catch (err) {
     console.error('[API /reviews/all] CRITICAL ERROR:', err.message);
