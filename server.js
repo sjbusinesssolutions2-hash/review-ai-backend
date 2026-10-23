@@ -1,6 +1,6 @@
 /**
  * SJbs.AI - Production Engine
- * Multi-Location GBP Sync, Concurrent Multi-Key AQ. Gemini Engine
+ * Multi-Location GBP Sync & Pure Dynamic Concurrent AQ. Gemini AI Engine
  */
 
 const express = require('express');
@@ -24,12 +24,10 @@ app.use(cors({
 
 const MONGO_URI = process.env.MONGO_URI;
 
-// Cleaned MongoDB Connection
 mongoose.connect(MONGO_URI)
   .then(() => console.log('MongoDB Atlas Connected'))
   .catch(err => console.error('MongoDB Connection Error:', err));
 
-// Production-ready session configuration
 app.use(session({
   secret: process.env.SESSION_SECRET || 'sjbs_ai_production_secret',
   resave: false,
@@ -125,7 +123,7 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// High-Speed Concurrent Multi-Key Race Engine
+// Pure Concurrent Multi-Key Dynamic AI Engine
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   if (geminiKeys.length === 0) return null;
 
@@ -428,19 +426,14 @@ app.get('/api/reviews/all', async (req, res) => {
 
             if (generated) {
               aiDraftReply = generated;
-            } else {
-              const firstName = item.reviewerName ? item.reviewerName.split(' ')[0] : 'there';
-              aiDraftReply = `Thank you so much for your review, ${firstName}! We really appreciate your feedback and support.`;
+              user.savedDrafts.push({
+                reviewId: item.reviewId,
+                draftText: aiDraftReply
+              });
+              userModified = true;
             }
-
-            user.savedDrafts.push({
-              reviewId: item.reviewId,
-              draftText: aiDraftReply
-            });
-            userModified = true;
           } catch (aiErr) {
-            const firstName = item.reviewerName ? item.reviewerName.split(' ')[0] : 'there';
-            aiDraftReply = `Thank you so much for taking the time to share your review, ${firstName}!`;
+            console.error('AI generation skipped gracefully for review:', item.reviewId, aiErr.message);
           }
         }
       }
@@ -535,4 +528,3 @@ app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-            
