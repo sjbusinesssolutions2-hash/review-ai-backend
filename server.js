@@ -504,7 +504,7 @@ app.get('/api/businesses', async (req, res) => {
         rating: liveRating.toFixed(1),
         reviewCount: liveCount,
         address: loc.address || '',
-        subscriptionStatus: loc.subscriptionStatus || user.subscriptionStatus || (idx === 0 ? 'pro' : 'free')
+        subscriptionStatus: loc.subscriptionStatus || 'free'
       });
     }
 
