@@ -705,58 +705,55 @@ app.post('/api/admin/reset-free-limit', async (req, res) => {
   }
 });
 
-// Test Generate Route with Strict Business Grounding & Image Pairing
+// Reliable Auto-Posts Test Bench Route
 app.post('/api/auto-posts/test-generate', async (req, res) => {
   try {
     const { locationName, category, topics, enableFestivals, enableReviewSpotlights } = req.body;
 
-    const prompt = `You are an authentic, professional business owner or manager for "${locationName || 'Our Business'}" (Category: ${category || 'Local Business'}).
-Write a realistic, grounded Google Business Profile post based on these settings:
-- Topics/Focus: ${topics || 'General business update'}
-- Festival/Holiday Themes: ${enableFestivals ? 'Enabled (mention seasonal atmosphere or greetings naturally if appropriate)' : 'Disabled'}
-- Review Spotlight: ${enableReviewSpotlights ? 'Enabled (reference customer satisfaction)' : 'Disabled'}
+    const bName = locationName || 'Our Business';
+    const bCat = category || 'Local Business';
 
-CRITICAL RULES TO AVOID FAKE/GENERIC AI CONTENT:
-1. NEVER invent fake giveaways, unbelievable promotions (e.g. "everything free"), or fake website URLs/phone numbers. Keep the offer and tone realistic for a real local business.
-2. Keep it 2 to 4 sentences long.
-3. Natural, warm, professional tone.
-4. Include 1 practical call-to-action (e.g. "Visit us today", "Book your slot") and 2 relevant hashtags.
+    const prompt = `You are a real, professional social media manager for "${bName}" (Category: ${bCat}).
+Write a realistic, authentic Google Business Profile post based on these parameters:
+- Topics/Focus: ${topics || 'General customer update and highlights'}
+- Festival/Holiday Themes: ${enableFestivals ? 'Enabled (incorporate seasonal greetings naturally)' : 'Disabled'}
+- Review Spotlight: ${enableReviewSpotlights ? 'Enabled (reference real customer appreciation)' : 'Disabled'}
 
-You MUST output your response strictly as a JSON object with two keys:
-1. "postText": The realistic post text meeting all rules above.
-2. "imageKeyword": 2-3 precise visual keywords for an Unsplash image search (e.g., "bakery counter pastries", "fresh coffee cup", "restaurant interior").
+STRICT GROUNDING RULES:
+1. DO NOT invent fake promotions, free giveaways (e.g., "everything free for a week"), fake URLs, or fake phone numbers.
+2. Keep the text between 2 to 4 sentences.
+3. Tone: Warm, professional, authentic local business.
+4. End with 1 practical call to action and 2 relevant hashtags.
 
-Output ONLY valid JSON. Do not include any explanations, preambles, or markdown formatting blocks like \`\`\`json.`;
+You MUST respond ONLY with a raw JSON object (no markdown code blocks, no preambles) formatted as:
+{
+  "postText": "Your generated post content here...",
+  "visualBannerTitle": "Short 2-4 word headline for photo banner based on topic"
+}`;
 
-    const rawResponse = await generateAutoPostText(locationName, category, topics, enableFestivals, enableReviewSpotlights);
+    const rawResponse = await generateAutoPostText(bName, bCat, topics, enableFestivals, enableReviewSpotlights);
     
     let postText = rawResponse;
-    let imageKeyword = category || 'business';
+    let visualBannerTitle = topics ? topics.split(',')[0].trim() : bCat;
 
     try {
-      // Extremely aggressive cleaner to strip any markdown code blocks if Gemini includes them
-      let cleanJsonStr = rawResponse.trim();
-      if (cleanJsonStr.startsWith('```')) {
-        cleanJsonStr = cleanJsonStr.replace(/^```[a-z]*\n?/i, '').replace(/```\s*$/, '').trim();
-      }
-      
+      // Strip markdown wrapping if Gemini includes ```json ... ```
+      let cleanJsonStr = rawResponse.replace(/```json/gi, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(cleanJsonStr);
       if (parsed.postText) postText = parsed.postText;
-      if (parsed.imageKeyword) imageKeyword = parsed.imageKeyword;
+      if (parsed.visualBannerTitle) visualBannerTitle = parsed.visualBannerTitle;
     } catch (e) {
-      console.warn('Could not parse JSON from Gemini, falling back to raw text:', e.message);
-      // Fallback: use raw response as post text and topics as image keyword
-      postText = rawResponse.replace(/```[a-z]*\n?/g, '').replace(/```/g, '').trim();
-      imageKeyword = topics || category || 'storefront';
+      // Fallback if raw text returned
+      postText = rawResponse.replace(/```/g, '').trim();
     }
 
-    const encodedQuery = encodeURIComponent(imageKeyword.trim());
-    const contextualImageUrl = `[https://images.unsplash.com/featured/?$](https://images.unsplash.com/featured/?$){encodedQuery}&w=800&auto=format&fit=crop`;
+    // Dynamic, reliable SVG Image Generator (no third-party API dependencies)
+    const svgBanner = `data:image/svg+xml;utf8,<svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="800" height="600" viewBox="0 0 800 600"><rect width="100%" height="100%" fill="%231e1b4b"/><circle cx="700" cy="100" r="250" fill="%23312e81" opacity="0.5"/><circle cx="100" cy="500" r="200" fill="%234338ca" opacity="0.3"/><text x="40" y="80" fill="%23818cf8" font-family="sans-serif" font-size="20" font-weight="bold" letter-spacing="2">${encodeURIComponent(bCat.toUpperCase())}</text><text x="40" y="280" fill="%23ffffff" font-family="sans-serif" font-size="42" font-weight="800">${encodeURIComponent(visualBannerTitle)}</text><text x="40" y="540" fill="%23c7d2fe" font-family="sans-serif" font-size="24" font-weight="600">${encodeURIComponent(bName)}</text></svg>`;
 
     res.json({
       success: true,
       postText: postText,
-      imageUrl: contextualImageUrl,
+      imageUrl: svgBanner,
       generatedAt: new Date().toISOString()
     });
   } catch (err) {
