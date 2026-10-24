@@ -670,7 +670,7 @@ app.post('/api/auto-posts/test-generate', async (req, res) => {
     `;
 
     // Uses your existing AI generation function (e.g. generateAiReply or Gemini API call)
-    const postText = await generateAiReply(prompt); 
+    const postText = await generate2LineAIReply(prompt); 
 
     res.json({
       success: true,
