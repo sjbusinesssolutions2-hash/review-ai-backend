@@ -705,16 +705,51 @@ app.post('/api/admin/reset-free-limit', async (req, res) => {
   }
 });
 
-// Test Generate Route for Auto-Posts Sandbox Test Bench
+// Test Generate Route with Contextual Image Keyword Generation
 app.post('/api/auto-posts/test-generate', async (req, res) => {
   try {
     const { locationName, category, topics, enableFestivals, enableReviewSpotlights } = req.body;
 
-    const postText = await generateAutoPostText(locationName, category, topics, enableFestivals, enableReviewSpotlights);
+    // Prompt Gemini to return a JSON containing both text and specific image search keywords
+    const prompt = `You are an expert social media manager for a local business named "${locationName || 'Our Business'}" (Category: ${category || 'Local Business'}).
+Generate an engaging Google Business Profile post and a contextual image query.
+
+Settings:
+- Topics/Focus: ${topics || 'General business highlights'}
+- Festival/Holiday Greetings: ${enableFestivals ? 'Enabled' : 'Disabled'}
+- Review Spotlight: ${enableReviewSpotlights ? 'Enabled' : 'Disabled'}
+
+You MUST output your response strictly as a JSON object with two keys:
+1. "postText": The 2-4 sentence engaging post with 1 CTA and 2 hashtags.
+2. "imageKeyword": 2-3 descriptive visual keywords representing the exact food, product, storefront, or festival vibe of this post (e.g. "fresh baked croissants coffee", "birthday cake celebration", "festive bakery display").
+
+Output ONLY valid JSON without markdown code fences.`;
+
+    const rawResponse = await generateAutoPostText(locationName, category, topics, enableFestivals, enableReviewSpotlights);
+    
+    // Parse JSON safely or fallback to text generation
+    let postText = rawResponse;
+    let imageKeyword = category || 'business';
+
+    try {
+      // Clean up markdown code blocks if the model wrapped the JSON
+      const cleanJsonStr = rawResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(cleanJsonStr);
+      if (parsed.postText) postText = parsed.postText;
+      if (parsed.imageKeyword) imageKeyword = parsed.imageKeyword;
+    } catch (e) {
+      // If it returned normal text instead of JSON, use it as post text and derive keyword from topics
+      imageKeyword = topics || category || 'storefront';
+    }
+
+    // Build a dynamic, relevant Unsplash Source URL using the AI-generated keywords
+    const encodedQuery = encodeURIComponent(imageKeyword.trim());
+    const contextualImageUrl = `https://images.unsplash.com/featured/?${encodedQuery}&w=800&auto=format&fit=crop`;
 
     res.json({
       success: true,
       postText: postText,
+      imageUrl: contextualImageUrl,
       generatedAt: new Date().toISOString()
     });
   } catch (err) {
