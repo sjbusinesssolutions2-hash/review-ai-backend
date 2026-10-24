@@ -706,6 +706,7 @@ app.post('/api/admin/reset-free-limit', async (req, res) => {
 });
 
 // Reliable Auto-Posts Test Bench Route
+// Bulletproof Auto-Posts Test Bench Route
 app.post('/api/auto-posts/test-generate', async (req, res) => {
   try {
     const { locationName, category, topics, enableFestivals, enableReviewSpotlights } = req.body;
@@ -713,46 +714,31 @@ app.post('/api/auto-posts/test-generate', async (req, res) => {
     const bName = locationName || 'Our Business';
     const bCat = category || 'Local Business';
 
-    const prompt = `You are a real, professional social media manager for "${bName}" (Category: ${bCat}).
-Write a realistic, authentic Google Business Profile post based on these parameters:
+    const prompt = `You are an authentic, professional social media manager for "${bName}" (Category: ${bCat}).
+Write a realistic Google Business Profile post based on these parameters:
 - Topics/Focus: ${topics || 'General customer update and highlights'}
 - Festival/Holiday Themes: ${enableFestivals ? 'Enabled (incorporate seasonal greetings naturally)' : 'Disabled'}
 - Review Spotlight: ${enableReviewSpotlights ? 'Enabled (reference real customer appreciation)' : 'Disabled'}
 
-STRICT GROUNDING RULES:
-1. DO NOT invent fake promotions, free giveaways (e.g., "everything free for a week"), fake URLs, or fake phone numbers.
-2. Keep the text between 2 to 4 sentences.
+STRICT RULES:
+1. DO NOT invent fake promotions, free giveaways, fake URLs, or fake phone numbers.
+2. Keep the text between 2 to 4 sentences long.
 3. Tone: Warm, professional, authentic local business.
 4. End with 1 practical call to action and 2 relevant hashtags.
+Write ONLY the post text. Do not wrap it in JSON or code blocks.`;
 
-You MUST respond ONLY with a raw JSON object (no markdown code blocks, no preambles) formatted as:
-{
-  "postText": "Your generated post content here...",
-  "visualBannerTitle": "Short 2-4 word headline for photo banner based on topic"
-}`;
-
-    const rawResponse = await generateAutoPostText(bName, bCat, topics, enableFestivals, enableReviewSpotlights);
+    // Get plain text directly from Gemini
+    const postText = await generateAutoPostText(bName, bCat, topics, enableFestivals, enableReviewSpotlights);
     
-    let postText = rawResponse;
-    let visualBannerTitle = topics ? topics.split(',')[0].trim() : bCat;
+    // Extract a clean title for the visual banner from topics or category
+    const visualBannerTitle = topics ? topics.split(',')[0].trim() : bCat;
 
-    try {
-      // Strip markdown wrapping if Gemini includes ```json ... ```
-      let cleanJsonStr = rawResponse.replace(/```json/gi, '').replace(/```/g, '').trim();
-      const parsed = JSON.parse(cleanJsonStr);
-      if (parsed.postText) postText = parsed.postText;
-      if (parsed.visualBannerTitle) visualBannerTitle = parsed.visualBannerTitle;
-    } catch (e) {
-      // Fallback if raw text returned
-      postText = rawResponse.replace(/```/g, '').trim();
-    }
-
-    // Dynamic, reliable SVG Image Generator (no third-party API dependencies)
-    const svgBanner = `data:image/svg+xml;utf8,<svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="800" height="600" viewBox="0 0 800 600"><rect width="100%" height="100%" fill="%231e1b4b"/><circle cx="700" cy="100" r="250" fill="%23312e81" opacity="0.5"/><circle cx="100" cy="500" r="200" fill="%234338ca" opacity="0.3"/><text x="40" y="80" fill="%23818cf8" font-family="sans-serif" font-size="20" font-weight="bold" letter-spacing="2">${encodeURIComponent(bCat.toUpperCase())}</text><text x="40" y="280" fill="%23ffffff" font-family="sans-serif" font-size="42" font-weight="800">${encodeURIComponent(visualBannerTitle)}</text><text x="40" y="540" fill="%23c7d2fe" font-family="sans-serif" font-size="24" font-weight="600">${encodeURIComponent(bName)}</text></svg>`;
+    // Generate reliable SVG Banner data URI
+    const svgBanner = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600"><rect width="100%" height="100%" fill="%231e1b4b"/><circle cx="700" cy="100" r="250" fill="%23312e81" opacity="0.5"/><circle cx="100" cy="500" r="200" fill="%234338ca" opacity="0.3"/><text x="40" y="80" fill="%23818cf8" font-family="sans-serif" font-size="20" font-weight="bold" letter-spacing="2">${encodeURIComponent(bCat.toUpperCase())}</text><text x="40" y="280" fill="%23ffffff" font-family="sans-serif" font-size="42" font-weight="800">${encodeURIComponent(visualBannerTitle)}</text><text x="40" y="540" fill="%23c7d2fe" font-family="sans-serif" font-size="24" font-weight="600">${encodeURIComponent(bName)}</text></svg>`;
 
     res.json({
       success: true,
-      postText: postText,
+      postText: postText || 'Visit us today for great service and special offers! #LocalBusiness #CustomerFirst',
       imageUrl: svgBanner,
       generatedAt: new Date().toISOString()
     });
