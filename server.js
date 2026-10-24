@@ -726,7 +726,7 @@ You MUST output your response strictly as a JSON object with two keys:
 1. "postText": The realistic post text meeting all rules above.
 2. "imageKeyword": 2-3 precise visual keywords for an Unsplash image search (e.g., "bakery counter pastries", "fresh coffee cup", "restaurant interior").
 
-Output ONLY valid JSON without markdown code fences.`;
+Output ONLY valid JSON. Do not include any explanations, preambles, or markdown formatting blocks like \`\`\`json.`;
 
     const rawResponse = await generateAutoPostText(locationName, category, topics, enableFestivals, enableReviewSpotlights);
     
@@ -734,17 +734,24 @@ Output ONLY valid JSON without markdown code fences.`;
     let imageKeyword = category || 'business';
 
     try {
-      const cleanJsonStr = rawResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+      // Extremely aggressive cleaner to strip any markdown code blocks if Gemini includes them
+      let cleanJsonStr = rawResponse.trim();
+      if (cleanJsonStr.startsWith('```')) {
+        cleanJsonStr = cleanJsonStr.replace(/^```[a-z]*\n?/i, '').replace(/```\s*$/, '').trim();
+      }
+      
       const parsed = JSON.parse(cleanJsonStr);
       if (parsed.postText) postText = parsed.postText;
       if (parsed.imageKeyword) imageKeyword = parsed.imageKeyword;
     } catch (e) {
-      // Fallback if model output wasn't pure JSON
+      console.warn('Could not parse JSON from Gemini, falling back to raw text:', e.message);
+      // Fallback: use raw response as post text and topics as image keyword
+      postText = rawResponse.replace(/```[a-z]*\n?/g, '').replace(/```/g, '').trim();
       imageKeyword = topics || category || 'storefront';
     }
 
     const encodedQuery = encodeURIComponent(imageKeyword.trim());
-    const contextualImageUrl = `https://images.unsplash.com/featured/?${encodedQuery}&w=800&auto=format&fit=crop`;
+    const contextualImageUrl = `[https://images.unsplash.com/featured/?$](https://images.unsplash.com/featured/?$){encodedQuery}&w=800&auto=format&fit=crop`;
 
     res.json({
       success: true,
