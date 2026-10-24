@@ -705,8 +705,7 @@ app.post('/api/admin/reset-free-limit', async (req, res) => {
   }
 });
 
-// Reliable Auto-Posts Test Bench Route
-// Bulletproof Auto-Posts Test Bench Route
+// Test Generate Route with Gemini Text & Open AI Image Generation
 app.post('/api/auto-posts/test-generate', async (req, res) => {
   try {
     const { locationName, category, topics, enableFestivals, enableReviewSpotlights } = req.body;
@@ -717,29 +716,30 @@ app.post('/api/auto-posts/test-generate', async (req, res) => {
     const prompt = `You are an authentic, professional social media manager for "${bName}" (Category: ${bCat}).
 Write a realistic Google Business Profile post based on these parameters:
 - Topics/Focus: ${topics || 'General customer update and highlights'}
-- Festival/Holiday Themes: ${enableFestivals ? 'Enabled (incorporate seasonal greetings naturally)' : 'Disabled'}
-- Review Spotlight: ${enableReviewSpotlights ? 'Enabled (reference real customer appreciation)' : 'Disabled'}
+- Festival/Holiday Themes: ${enableFestivals ? 'Enabled' : 'Disabled'}
+- Review Spotlight: ${enableReviewSpotlights ? 'Enabled' : 'Disabled'}
 
 STRICT RULES:
 1. DO NOT invent fake promotions, free giveaways, fake URLs, or fake phone numbers.
 2. Keep the text between 2 to 4 sentences long.
 3. Tone: Warm, professional, authentic local business.
 4. End with 1 practical call to action and 2 relevant hashtags.
+
 Write ONLY the post text. Do not wrap it in JSON or code blocks.`;
 
-    // Get plain text directly from Gemini
     const postText = await generateAutoPostText(bName, bCat, topics, enableFestivals, enableReviewSpotlights);
-    
-    // Extract a clean title for the visual banner from topics or category
-    const visualBannerTitle = topics ? topics.split(',')[0].trim() : bCat;
 
-    // Generate reliable SVG Banner data URI
-    const svgBanner = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600"><rect width="100%" height="100%" fill="%231e1b4b"/><circle cx="700" cy="100" r="250" fill="%23312e81" opacity="0.5"/><circle cx="100" cy="500" r="200" fill="%234338ca" opacity="0.3"/><text x="40" y="80" fill="%23818cf8" font-family="sans-serif" font-size="20" font-weight="bold" letter-spacing="2">${encodeURIComponent(bCat.toUpperCase())}</text><text x="40" y="280" fill="%23ffffff" font-family="sans-serif" font-size="42" font-weight="800">${encodeURIComponent(visualBannerTitle)}</text><text x="40" y="540" fill="%23c7d2fe" font-family="sans-serif" font-size="24" font-weight="600">${encodeURIComponent(bName)}</text></svg>`;
+    // Clean up topics/category to create a descriptive visual prompt for the AI image
+    const visualSubject = (topics || bCat).replace(/[^a-zA-Z0-9 ,]/g, '').trim();
+    const imagePrompt = encodeURIComponent(`Professional high-quality commercial photo of ${visualSubject}, ${bCat}, warm lighting, 4k, realistic marketing photography`);
+    
+    // Zero-login, instant AI image generation URL
+    const aiImageUrl = `https://pollinations.ai/p/${imagePrompt}?width=800&height=600&seed=${Math.floor(Math.random() * 999999)}&nologo=true`;
 
     res.json({
       success: true,
       postText: postText || 'Visit us today for great service and special offers! #LocalBusiness #CustomerFirst',
-      imageUrl: svgBanner,
+      imageUrl: aiImageUrl,
       generatedAt: new Date().toISOString()
     });
   } catch (err) {
