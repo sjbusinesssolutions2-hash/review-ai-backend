@@ -767,6 +767,79 @@ Design Guidelines:
   }
 });
 
+app.post('/api/auto-posts/process-scheduled', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader !== `Bearer ${process.env.CRON_SECRET_KEY}`) {
+      return res.status(401).json({ success: false, message: 'Unauthorized cron trigger' });
+    }
+
+    console.log('[Cron Job] Processing scheduled posts for active B2B Pro users...');
+
+    // Fetch active businesses from MongoDB
+    const activeBusinesses = await Business.find({ 'autoPostConfig.enabled': true });
+    let processedCount = 0;
+
+    for (const biz of activeBusinesses) {
+      if (isPostDue(biz.lastPostedAt, biz.autoPostConfig?.frequency || 'daily')) {
+        
+        // 1. Generate text
+        const postText = await generateAutoPostText(
+          biz.name, 
+          biz.category, 
+          biz.topics, 
+          biz.autoPostConfig?.enableFestivals, 
+          biz.autoPostConfig?.enableReviewSpotlights
+        );
+
+        // 2. Generate unique SVG vector banner via text model
+        const svgPrompt = `Create a sleek commercial vector banner in raw SVG format for:
+- Business: ${biz.name}
+- Category: ${biz.category}
+- Focus: ${biz.topics || biz.category}
+
+ViewBox="0 0 800 600". Output ONLY pure raw <svg>...</svg> XML code.`;
+
+        const rawSvgText = await generateAutoPostText(biz.name, biz.category, svgPrompt, false, false);
+        
+        let cleanSvg = rawSvgText.replace(/```xml/gi, '').replace(/```svg/gi, '').replace(/```/g, '').trim();
+        const svgMatch = cleanSvg.match(/<svg[\s\S]*?<\/svg>/i);
+        cleanSvg = svgMatch ? svgMatch[0] : `<svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" viewBox="0 0 800 600"><rect width="800" height="600" fill="#0f172a"/><text x="400" y="300" fill="#fff" font-size="36" text-anchor="middle">${biz.name}</text></svg>`;
+
+        const base64Svg = Buffer.from(cleanSvg).toString('base64');
+        const imageUrl = `data:image/svg+xml;base64,${base64Svg}`;
+
+        // 3. Save / Publish post
+        await Post.create({
+          businessId: biz._id,
+          postText: postText,
+          imageUrl: imageUrl,
+          status: 'PUBLISHED',
+          createdAt: new Date()
+        });
+
+        biz.lastPostedAt = new Date();
+        await biz.save();
+        processedCount++;
+      }
+    }
+
+    res.json({ success: true, processed: processedCount });
+  } catch (err) {
+    console.error('Error in scheduled post processing:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+function isPostDue(lastPostedAt, frequency) {
+  if (!lastPostedAt) return true;
+  const now = new Date();
+  const diffInHours = (now - new Date(lastPostedAt)) / (1000 * 60 * 60);
+  if (frequency === 'daily') return diffInHours >= 20;
+  if (frequency === 'weekly') return diffInHours >= 160;
+  return false;
+}
+
 app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
