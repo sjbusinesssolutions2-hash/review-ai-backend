@@ -713,33 +713,37 @@ app.post('/api/auto-posts/test-generate', async (req, res) => {
     const bName = locationName || 'Our Business';
     const bCat = category || 'Local Business';
 
-    // 1. Generate Post Text using your existing helper
+    // 1. Generate post text using your existing function
     const postText = await generateAutoPostText(bName, bCat, topics, enableFestivals, enableReviewSpotlights);
 
-    // 2. Prompt free Gemini text model for pure SVG XML code
-    const svgPrompt = `You are an expert graphic designer creating modern social media vector banners.
-Generate a valid, standalone SVG banner graphic code for a local business post.
-
-Business Details:
-- Name: ${bName}
+    // 2. Prompt for SVG code generation using your existing generateAutoPostText helper
+    const svgPrompt = `Create a sleek, modern commercial vector banner graphic in raw SVG XML format for:
+- Business: ${bName}
 - Category: ${bCat}
-- Specific Topics: ${topics || 'General highlights'}
+- Focus Topics: ${topics || bCat}
 
-Design Requirements:
-- ViewBox: 0 0 800 600
-- Style: Sleek modern graphic with attractive background gradients, simple illustrations, and professional typography displaying "${bName}".
-- Output ONLY pure, valid raw <svg>...</svg> XML code.
-- Do NOT wrap in markdown fences (\`\`\`xml or \`\`\`svg).
-- Do NOT include any unescaped special characters like & (use &amp;).`;
+Design Guidelines:
+- ViewBox="0 0 800 600"
+- Use attractive background gradients, simple vector illustrations, or decorative icons relevant to ${bCat}.
+- Make sure "${bName}" is written clearly as prominent bold text.
+- Output ONLY valid raw <svg>...</svg> XML code. No markdown code blocks, no intro or outro text.`;
 
-    // Call your working Gemini text model (e.g., gemini-1.5-flash or gemini-2.0-flash)
-    const rawSvgText = await generateTextFromGemini(svgPrompt);
+    // Use your existing text generation helper
+    const rawSvgText = await generateAutoPostText(bName, bCat, svgPrompt, false, false);
 
-    // Sanitize markdown fences if present
-    let cleanSvg = rawSvgText.replace(/```xml/gi, '').replace(/```svg/gi, '').replace(/```/g, '').trim();
+    // Clean up response if the model outputs markdown code blocks
+    let cleanSvg = rawSvgText
+      .replace(/```xml/gi, '')
+      .replace(/```svg/gi, '')
+      .replace(/```/g, '')
+      .trim();
 
-    // Fallback if the AI output fails to start with <svg
-    if (!cleanSvg.startsWith('<svg')) {
+    // Extract SVG content if there's any surrounding text
+    const svgMatch = cleanSvg.match(/<svg[\s\S]*?<\/svg>/i);
+    if (svgMatch) {
+      cleanSvg = svgMatch[0];
+    } else {
+      // Safe fallback SVG layout
       cleanSvg = `<svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" viewBox="0 0 800 600" width="100%" height="100%">
         <rect width="800" height="600" fill="#0f172a"/>
         <text x="400" y="280" font-family="sans-serif" font-size="36" fill="#ffffff" font-weight="bold" text-anchor="middle">${bName}</text>
@@ -747,7 +751,7 @@ Design Requirements:
       </svg>`;
     }
 
-    // Base64 encode the SVG string to ensure safe parsing in HTML img tags
+    // Base64 encode to safely transmit to frontend
     const base64Svg = Buffer.from(cleanSvg).toString('base64');
     const imageUrl = `data:image/svg+xml;base64,${base64Svg}`;
 
