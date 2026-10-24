@@ -713,6 +713,7 @@ app.post('/api/auto-posts/test-generate', async (req, res) => {
     const bName = locationName || 'Our Business';
     const bCat = category || 'Local Business';
 
+    // 1. Generate Post Text using your existing helper
     const prompt = `You are an authentic, professional social media manager for "${bName}" (Category: ${bCat}).
 Write a realistic Google Business Profile post based on these parameters:
 - Topics/Focus: ${topics || 'General customer update and highlights'}
@@ -724,22 +725,39 @@ STRICT RULES:
 2. Keep the text between 2 to 4 sentences long.
 3. Tone: Warm, professional, authentic local business.
 4. End with 1 practical call to action and 2 relevant hashtags.
-
-Write ONLY the post text. Do not wrap it in JSON or code blocks.`;
+Write ONLY the post text.`;
 
     const postText = await generateAutoPostText(bName, bCat, topics, enableFestivals, enableReviewSpotlights);
 
-    // Clean up topics/category to create a descriptive visual prompt for the AI image
-    const visualSubject = (topics || bCat).replace(/[^a-zA-Z0-9 ,]/g, '').trim();
-    const imagePrompt = encodeURIComponent(`Professional high-quality commercial photo of ${visualSubject}, ${bCat}, warm lighting, 4k, realistic marketing photography`);
+    // 2. Generate Image using Gemini's image generation model
+    const imagePrompt = `Professional commercial product or storefront photograph of ${topics || bCat}, warm lighting, high resolution, clean realistic marketing photography.`;
     
-    // Zero-login, instant AI image generation URL
-    const aiImageUrl = `https://pollinations.ai/p/${imagePrompt}?width=800&height=600&seed=${Math.floor(Math.random() * 999999)}&nologo=true`;
+    const imageResponse = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: imagePrompt,
+      config: {
+        responseModalities: ['TEXT', 'IMAGE'],
+      },
+    });
+
+    let base64Image = '';
+    let mimeType = 'image/png';
+
+    // Extract image part from Gemini response
+    for (const part of imageResponse.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        base64Image = part.inlineData.data;
+        mimeType = part.inlineData.mimeType || 'image/png';
+        break;
+      }
+    }
+
+    const imageUrl = base64Image ? `data:${mimeType};base64,${base64Image}` : '';
 
     res.json({
       success: true,
-      postText: postText || 'Visit us today for great service and special offers! #LocalBusiness #CustomerFirst',
-      imageUrl: aiImageUrl,
+      postText: postText || 'Visit us today for great service and special offers! #LocalBusiness',
+      imageUrl: imageUrl,
       generatedAt: new Date().toISOString()
     });
   } catch (err) {
@@ -747,6 +765,7 @@ Write ONLY the post text. Do not wrap it in JSON or code blocks.`;
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
