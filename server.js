@@ -250,6 +250,51 @@ Requirements:
   return 'Visit us today for great service and special offers! #LocalBusiness #CustomerFirst';
 }
 
+const AutoPostConfig = require('./models/AutoPostConfig');
+
+// 1. Get Auto-Post Configuration for a Business
+app.get('/api/auto-posts/config/:businessId', async (req, res) => {
+  try {
+    let config = await AutoPostConfig.findOne({ businessId: req.params.businessId });
+    if (!config) {
+      config = await AutoPostConfig.create({ businessId: req.params.businessId });
+    }
+    res.json({ success: true, config });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 2. Update Auto-Post Preferences
+app.post('/api/auto-posts/config/:businessId', async (req, res) => {
+  try {
+    const { enabled, frequency, preferredTime, topics, enableFestivals, enableReviewSpotlights } = req.body;
+
+    const config = await AutoPostConfig.findOneAndUpdate(
+      { businessId: req.params.businessId },
+      { enabled, frequency, preferredTime, topics, enableFestivals, enableReviewSpotlights },
+      { new: true, upsert: true }
+    );
+
+    res.json({ success: true, message: 'Settings saved successfully', config });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 3. Get Scheduled & Post History
+app.get('/api/auto-posts/history/:businessId', async (req, res) => {
+  try {
+    const posts = await Post.find({ businessId: req.params.businessId })
+      .sort({ createdAt: -1 })
+      .limit(10);
+    res.json({ success: true, posts });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
 async function fetchLocationReviews(accessToken, accountName, locationName) {
   try {
     let parentPath = locationName;
