@@ -705,44 +705,44 @@ app.post('/api/admin/reset-free-limit', async (req, res) => {
   }
 });
 
-// Test Generate Route with Contextual Image Keyword Generation
+// Test Generate Route with Strict Business Grounding & Image Pairing
 app.post('/api/auto-posts/test-generate', async (req, res) => {
   try {
     const { locationName, category, topics, enableFestivals, enableReviewSpotlights } = req.body;
 
-    // Prompt Gemini to return a JSON containing both text and specific image search keywords
-    const prompt = `You are an expert social media manager for a local business named "${locationName || 'Our Business'}" (Category: ${category || 'Local Business'}).
-Generate an engaging Google Business Profile post and a contextual image query.
+    const prompt = `You are an authentic, professional business owner or manager for "${locationName || 'Our Business'}" (Category: ${category || 'Local Business'}).
+Write a realistic, grounded Google Business Profile post based on these settings:
+- Topics/Focus: ${topics || 'General business update'}
+- Festival/Holiday Themes: ${enableFestivals ? 'Enabled (mention seasonal atmosphere or greetings naturally if appropriate)' : 'Disabled'}
+- Review Spotlight: ${enableReviewSpotlights ? 'Enabled (reference customer satisfaction)' : 'Disabled'}
 
-Settings:
-- Topics/Focus: ${topics || 'General business highlights'}
-- Festival/Holiday Greetings: ${enableFestivals ? 'Enabled' : 'Disabled'}
-- Review Spotlight: ${enableReviewSpotlights ? 'Enabled' : 'Disabled'}
+CRITICAL RULES TO AVOID FAKE/GENERIC AI CONTENT:
+1. NEVER invent fake giveaways, unbelievable promotions (e.g. "everything free"), or fake website URLs/phone numbers. Keep the offer and tone realistic for a real local business.
+2. Keep it 2 to 4 sentences long.
+3. Natural, warm, professional tone.
+4. Include 1 practical call-to-action (e.g. "Visit us today", "Book your slot") and 2 relevant hashtags.
 
 You MUST output your response strictly as a JSON object with two keys:
-1. "postText": The 2-4 sentence engaging post with 1 CTA and 2 hashtags.
-2. "imageKeyword": 2-3 descriptive visual keywords representing the exact food, product, storefront, or festival vibe of this post (e.g. "fresh baked croissants coffee", "birthday cake celebration", "festive bakery display").
+1. "postText": The realistic post text meeting all rules above.
+2. "imageKeyword": 2-3 precise visual keywords for an Unsplash image search (e.g., "bakery counter pastries", "fresh coffee cup", "restaurant interior").
 
 Output ONLY valid JSON without markdown code fences.`;
 
     const rawResponse = await generateAutoPostText(locationName, category, topics, enableFestivals, enableReviewSpotlights);
     
-    // Parse JSON safely or fallback to text generation
     let postText = rawResponse;
     let imageKeyword = category || 'business';
 
     try {
-      // Clean up markdown code blocks if the model wrapped the JSON
       const cleanJsonStr = rawResponse.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(cleanJsonStr);
       if (parsed.postText) postText = parsed.postText;
       if (parsed.imageKeyword) imageKeyword = parsed.imageKeyword;
     } catch (e) {
-      // If it returned normal text instead of JSON, use it as post text and derive keyword from topics
+      // Fallback if model output wasn't pure JSON
       imageKeyword = topics || category || 'storefront';
     }
 
-    // Build a dynamic, relevant Unsplash Source URL using the AI-generated keywords
     const encodedQuery = encodeURIComponent(imageKeyword.trim());
     const contextualImageUrl = `https://images.unsplash.com/featured/?${encodedQuery}&w=800&auto=format&fit=crop`;
 
