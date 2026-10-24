@@ -651,6 +651,38 @@ app.post('/api/admin/reset-free-limit', async (req, res) => {
   }
 });
 
+// Test Generate Route for Sandbox Test Bench
+app.post('/api/auto-posts/test-generate', async (req, res) => {
+  try {
+    const { locationName, category, topics, enableFestivals, enableReviewSpotlights } = req.body;
+
+    const prompt = `
+      You are an expert social media manager for a local business named "${locationName || 'Our Business'}" (Category: ${category || 'Local Business'}).
+      Generate an engaging Google Business Profile post based on these settings:
+      - Topics/Focus: ${topics || 'General business highlights and customer service'}
+      - Festival/Holiday Greetings: ${enableFestivals ? 'Enabled (incorporate upcoming or seasonal theme if relevant)' : 'Disabled'}
+      - Review Spotlight: ${enableReviewSpotlights ? 'Enabled (highlight customer satisfaction)' : 'Disabled'}
+
+      Requirements:
+      - 2 to 4 sentences long.
+      - Professional, engaging, and inviting tone.
+      - Include 1 clear call-to-action and 2 relevant hashtags.
+    `;
+
+    // Uses your existing AI generation function (e.g. generateAiReply or Gemini API call)
+    const postText = await generateAiReply(prompt); 
+
+    res.json({
+      success: true,
+      postText: postText,
+      generatedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('Error in test-generate route:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 
 app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
