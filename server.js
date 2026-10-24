@@ -713,27 +713,14 @@ app.post('/api/auto-posts/test-generate', async (req, res) => {
     const bName = locationName || 'Our Business';
     const bCat = category || 'Local Business';
 
-    // 1. Generate Post Text using your existing helper
-    const prompt = `You are an authentic, professional social media manager for "${bName}" (Category: ${bCat}).
-Write a realistic Google Business Profile post based on these parameters:
-- Topics/Focus: ${topics || 'General customer update and highlights'}
-- Festival/Holiday Themes: ${enableFestivals ? 'Enabled' : 'Disabled'}
-- Review Spotlight: ${enableReviewSpotlights ? 'Enabled' : 'Disabled'}
-
-STRICT RULES:
-1. DO NOT invent fake promotions, free giveaways, fake URLs, or fake phone numbers.
-2. Keep the text between 2 to 4 sentences long.
-3. Tone: Warm, professional, authentic local business.
-4. End with 1 practical call to action and 2 relevant hashtags.
-Write ONLY the post text.`;
-
+    // 1. Generate the post text using your existing function
     const postText = await generateAutoPostText(bName, bCat, topics, enableFestivals, enableReviewSpotlights);
 
-    // 2. Generate Image using Gemini's image generation model
-    const imagePrompt = `Professional commercial product or storefront photograph of ${topics || bCat}, warm lighting, high resolution, clean realistic marketing photography.`;
+    // 2. Generate native image using Gemini API
+    const imagePrompt = `A professional, high-resolution commercial photograph for a ${bCat}, focusing on ${topics || 'business highlights'}. Warm marketing lighting, realistic.`;
     
     const imageResponse = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
+      model: 'gemini-2.0-flash',
       contents: imagePrompt,
       config: {
         responseModalities: ['TEXT', 'IMAGE'],
@@ -743,8 +730,8 @@ Write ONLY the post text.`;
     let base64Image = '';
     let mimeType = 'image/png';
 
-    // Extract image part from Gemini response
-    for (const part of imageResponse.candidates?.[0]?.content?.parts || []) {
+    const parts = imageResponse.candidates?.[0]?.content?.parts || [];
+    for (const part of parts) {
       if (part.inlineData) {
         base64Image = part.inlineData.data;
         mimeType = part.inlineData.mimeType || 'image/png';
