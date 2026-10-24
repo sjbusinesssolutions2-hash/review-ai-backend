@@ -706,8 +706,6 @@ app.post('/api/admin/reset-free-limit', async (req, res) => {
 });
 
 // Test Generate Route with Gemini Text & Open AI Image Generation
-const fetch = require('node-fetch'); // Ensure node-fetch is available or use native fetch if Node 18+
-
 app.post('/api/auto-posts/test-generate', async (req, res) => {
   try {
     const { locationName, category, topics, enableFestivals, enableReviewSpotlights } = req.body;
@@ -715,19 +713,48 @@ app.post('/api/auto-posts/test-generate', async (req, res) => {
     const bName = locationName || 'Our Business';
     const bCat = category || 'Local Business';
 
+    // 1. Generate Post Text using your existing helper
     const postText = await generateAutoPostText(bName, bCat, topics, enableFestivals, enableReviewSpotlights);
 
-    // Use Unsplash's direct keyword-targeted photo endpoint for high-res, watermark-free images matching the exact topic
-    const searchTerm = encodeURIComponent(`${topics || bCat} ${bCat}`.trim());
-    const imageUrl = `https://images.unsplash.com/photo-1509440159596-0249088772ff?w=800&auto=format&fit=crop&q=80`; // Falls back to a clean professional shot, or customize dynamically below:
-    
-    // Dynamic query image link:
-    const dynamicImageUrl = `https://source.unsplash.com/800x600/?${searchTerm}`;
+    // 2. Prompt free Gemini text model for pure SVG XML code
+    const svgPrompt = `You are an expert graphic designer creating modern social media vector banners.
+Generate a valid, standalone SVG banner graphic code for a local business post.
+
+Business Details:
+- Name: ${bName}
+- Category: ${bCat}
+- Specific Topics: ${topics || 'General highlights'}
+
+Design Requirements:
+- ViewBox: 0 0 800 600
+- Style: Sleek modern graphic with attractive background gradients, simple illustrations, and professional typography displaying "${bName}".
+- Output ONLY pure, valid raw <svg>...</svg> XML code.
+- Do NOT wrap in markdown fences (\`\`\`xml or \`\`\`svg).
+- Do NOT include any unescaped special characters like & (use &amp;).`;
+
+    // Call your working Gemini text model (e.g., gemini-1.5-flash or gemini-2.0-flash)
+    const rawSvgText = await generateTextFromGemini(svgPrompt);
+
+    // Sanitize markdown fences if present
+    let cleanSvg = rawSvgText.replace(/```xml/gi, '').replace(/```svg/gi, '').replace(/```/g, '').trim();
+
+    // Fallback if the AI output fails to start with <svg
+    if (!cleanSvg.startsWith('<svg')) {
+      cleanSvg = `<svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" viewBox="0 0 800 600" width="100%" height="100%">
+        <rect width="800" height="600" fill="#0f172a"/>
+        <text x="400" y="280" font-family="sans-serif" font-size="36" fill="#ffffff" font-weight="bold" text-anchor="middle">${bName}</text>
+        <text x="400" y="340" font-family="sans-serif" font-size="20" fill="#a5b4fc" text-anchor="middle">${bCat}</text>
+      </svg>`;
+    }
+
+    // Base64 encode the SVG string to ensure safe parsing in HTML img tags
+    const base64Svg = Buffer.from(cleanSvg).toString('base64');
+    const imageUrl = `data:image/svg+xml;base64,${base64Svg}`;
 
     res.json({
       success: true,
       postText: postText || 'Visit us today for great service and special offers! #LocalBusiness',
-      imageUrl: `https://images.unsplash.com/featured/800x600?${searchTerm}`,
+      imageUrl: imageUrl,
       generatedAt: new Date().toISOString()
     });
   } catch (err) {
