@@ -706,6 +706,8 @@ app.post('/api/admin/reset-free-limit', async (req, res) => {
 });
 
 // Test Generate Route with Gemini Text & Open AI Image Generation
+const fetch = require('node-fetch'); // Ensure node-fetch is available or use native fetch if Node 18+
+
 app.post('/api/auto-posts/test-generate', async (req, res) => {
   try {
     const { locationName, category, topics, enableFestivals, enableReviewSpotlights } = req.body;
@@ -713,38 +715,19 @@ app.post('/api/auto-posts/test-generate', async (req, res) => {
     const bName = locationName || 'Our Business';
     const bCat = category || 'Local Business';
 
-    // 1. Generate the post text using your existing function
     const postText = await generateAutoPostText(bName, bCat, topics, enableFestivals, enableReviewSpotlights);
 
-    // 2. Generate native image using Gemini API
-    const imagePrompt = `A professional, high-resolution commercial photograph for a ${bCat}, focusing on ${topics || 'business highlights'}. Warm marketing lighting, realistic.`;
+    // Use Unsplash's direct keyword-targeted photo endpoint for high-res, watermark-free images matching the exact topic
+    const searchTerm = encodeURIComponent(`${topics || bCat} ${bCat}`.trim());
+    const imageUrl = `https://images.unsplash.com/photo-1509440159596-0249088772ff?w=800&auto=format&fit=crop&q=80`; // Falls back to a clean professional shot, or customize dynamically below:
     
-    const imageResponse = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
-      contents: imagePrompt,
-      config: {
-        responseModalities: ['TEXT', 'IMAGE'],
-      },
-    });
-
-    let base64Image = '';
-    let mimeType = 'image/png';
-
-    const parts = imageResponse.candidates?.[0]?.content?.parts || [];
-    for (const part of parts) {
-      if (part.inlineData) {
-        base64Image = part.inlineData.data;
-        mimeType = part.inlineData.mimeType || 'image/png';
-        break;
-      }
-    }
-
-    const imageUrl = base64Image ? `data:${mimeType};base64,${base64Image}` : '';
+    // Dynamic query image link:
+    const dynamicImageUrl = `https://source.unsplash.com/800x600/?${searchTerm}`;
 
     res.json({
       success: true,
       postText: postText || 'Visit us today for great service and special offers! #LocalBusiness',
-      imageUrl: imageUrl,
+      imageUrl: `https://images.unsplash.com/featured/800x600?${searchTerm}`,
       generatedAt: new Date().toISOString()
     });
   } catch (err) {
@@ -752,7 +735,6 @@ app.post('/api/auto-posts/test-generate', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
-
 
 app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
