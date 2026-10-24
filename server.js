@@ -600,6 +600,58 @@ app.post('/api/reviews/reply', async (req, res) => {
   }
 });
 
+// 1. Fetch all users and their locations for Admin Panel
+app.get('/api/admin/users', async (req, res) => {
+  try {
+    const users = await User.find({}).select('-accessToken -refreshToken');
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch users list' });
+  }
+});
+
+// 2. Update subscription status for a specific location of a user
+app.post('/api/admin/update-subscription', async (req, res) => {
+  const { userId, locationId, subscriptionStatus } = req.body;
+
+  if (!userId || !locationId || !subscriptionStatus) {
+    return res.status(400).json({ error: 'Missing required parameters' });
+  }
+
+  try {
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const targetLoc = user.locations.find(loc => loc.locationId === locationId);
+    if (!targetLoc) return res.status(404).json({ error: 'Location not found' });
+
+    targetLoc.subscriptionStatus = subscriptionStatus; // 'pro' or 'free'
+    await user.save();
+
+    res.json({ success: true, message: `Updated location to ${subscriptionStatus}` });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error updating subscription' });
+  }
+});
+
+// 3. Reset free replies usage counter for a user
+app.post('/api/admin/reset-free-limit', async (req, res) => {
+  const { userId } = req.body;
+  try {
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    user.freeRepliesUsed = 0;
+    user.savedDrafts = [];
+    await user.save();
+
+    res.json({ success: true, message: 'Reset free usage counter' });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error resetting limit' });
+  }
+});
+
+
 app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
 const PORT = process.env.PORT || 5000;
