@@ -125,7 +125,7 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Sequential Key & Model Failover Engine (3.5-flash-lite, 3.5-flash, 3.6-flash)
+// Sequential Key & Model Failover Engine for Review Replies
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment) {
   if (!geminiKeys || geminiKeys.length === 0) {
     console.error('[Gemini AI] No valid AQ. API keys found in environment variables.');
@@ -191,6 +191,63 @@ Instructions:
 
   console.error('[Gemini AI] All keys and model fallbacks exhausted.');
   return null;
+}
+
+// Dedicated Generator for Auto-Posts & Test Bench
+async function generateAutoPostText(locationName, category, topics, enableFestivals, enableReviewSpotlights) {
+  if (!geminiKeys || geminiKeys.length === 0) {
+    console.error('[Gemini AI] No valid AQ. API keys found in environment variables.');
+    return null;
+  }
+
+  const prompt = `You are an expert social media manager for a local business named "${locationName || 'Our Business'}" (Category: ${category || 'Local Business'}).
+Generate an engaging Google Business Profile post based on these settings:
+- Topics/Focus: ${topics || 'General business highlights and customer service'}
+- Festival/Holiday Greetings: ${enableFestivals ? 'Enabled (incorporate upcoming or seasonal theme if relevant)' : 'Disabled'}
+- Review Spotlight: ${enableReviewSpotlights ? 'Enabled (highlight customer satisfaction)' : 'Disabled'}
+
+Requirements:
+1. 2 to 4 sentences long.
+2. Professional, engaging, and inviting tone.
+3. Include 1 clear call-to-action and 2 relevant hashtags.
+4. Avoid repetitive formulas or rigid templates.`;
+
+  const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.6-flash'];
+
+  for (let k = 0; k < geminiKeys.length; k++) {
+    const key = geminiKeys[k];
+    const aiClient = new GoogleGenAI({ apiKey: key });
+
+    for (const model of modelsToTry) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+        const response = await aiClient.models.generateContent({
+          model: model,
+          contents: prompt,
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        let responseText = '';
+        if (typeof response.text === 'string') {
+          responseText = response.text;
+        } else if (response.candidates && response.candidates[0] && response.candidates[0].content) {
+          responseText = response.candidates[0].content.parts.map(p => p.text).join('');
+        }
+
+        if (responseText && responseText.trim().length > 0) {
+          return responseText.trim().replace(/^["']|["']$/g, '');
+        }
+      } catch (err) {
+        console.warn(`[Gemini AI] Key ${k + 1} with model ${model} failed: ${err.message}. Trying next...`);
+      }
+    }
+  }
+
+  console.error('[Gemini AI] All keys and model fallbacks exhausted for auto-post.');
+  return 'Visit us today for great service and special offers! #LocalBusiness #CustomerFirst';
 }
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
@@ -477,7 +534,6 @@ app.get('/api/reviews/all', async (req, res) => {
             aiDraftReply = existingDraft.draftText;
             console.log(`[API /reviews/all] Loaded cached MongoDB draft for reviewId: ${item.reviewId}`);
           } else {
-            // Free Tier Gating: Limit free users to generating AI drafts for only 2 reviews
             let canGenerate = true;
             if (!isPro) {
               if (freeRepliesCount >= 2) {
@@ -600,7 +656,7 @@ app.post('/api/reviews/reply', async (req, res) => {
   }
 });
 
-// 1. Fetch all users and their locations for Admin Panel
+// Admin Panel APIs
 app.get('/api/admin/users', async (req, res) => {
   try {
     const users = await User.find({}).select('-accessToken -refreshToken');
@@ -610,7 +666,6 @@ app.get('/api/admin/users', async (req, res) => {
   }
 });
 
-// 2. Update subscription status for a specific location of a user
 app.post('/api/admin/update-subscription', async (req, res) => {
   const { userId, locationId, subscriptionStatus } = req.body;
 
@@ -625,7 +680,7 @@ app.post('/api/admin/update-subscription', async (req, res) => {
     const targetLoc = user.locations.find(loc => loc.locationId === locationId);
     if (!targetLoc) return res.status(404).json({ error: 'Location not found' });
 
-    targetLoc.subscriptionStatus = subscriptionStatus; // 'pro' or 'free'
+    targetLoc.subscriptionStatus = subscriptionStatus;
     await user.save();
 
     res.json({ success: true, message: `Updated location to ${subscriptionStatus}` });
@@ -634,7 +689,6 @@ app.post('/api/admin/update-subscription', async (req, res) => {
   }
 });
 
-// 3. Reset free replies usage counter for a user
 app.post('/api/admin/reset-free-limit', async (req, res) => {
   const { userId } = req.body;
   try {
@@ -651,26 +705,12 @@ app.post('/api/admin/reset-free-limit', async (req, res) => {
   }
 });
 
-// Test Generate Route for Sandbox Test Bench
+// Test Generate Route for Auto-Posts Sandbox Test Bench
 app.post('/api/auto-posts/test-generate', async (req, res) => {
   try {
     const { locationName, category, topics, enableFestivals, enableReviewSpotlights } = req.body;
 
-    const prompt = `
-      You are an expert social media manager for a local business named "${locationName || 'Our Business'}" (Category: ${category || 'Local Business'}).
-      Generate an engaging Google Business Profile post based on these settings:
-      - Topics/Focus: ${topics || 'General business highlights and customer service'}
-      - Festival/Holiday Greetings: ${enableFestivals ? 'Enabled (incorporate upcoming or seasonal theme if relevant)' : 'Disabled'}
-      - Review Spotlight: ${enableReviewSpotlights ? 'Enabled (highlight customer satisfaction)' : 'Disabled'}
-
-      Requirements:
-      - 2 to 4 sentences long.
-      - Professional, engaging, and inviting tone.
-      - Include 1 clear call-to-action and 2 relevant hashtags.
-    `;
-
-    // Uses your existing AI generation function (e.g. generateAiReply or Gemini API call)
-    const postText = await generate2LineAIReply(prompt); 
+    const postText = await generateAutoPostText(locationName, category, topics, enableFestivals, enableReviewSpotlights);
 
     res.json({
       success: true,
@@ -682,7 +722,6 @@ app.post('/api/auto-posts/test-generate', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
-
 
 app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
