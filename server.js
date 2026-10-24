@@ -712,13 +712,16 @@ app.get('/api/admin/users', async (req, res) => {
 });
 
 app.post('/api/admin/update-subscription', async (req, res) => {
-  const { userId, locationId, subscriptionStatus } = req.body;
+  let { userId, locationId, subscriptionStatus } = req.body;
 
   if (!userId || !locationId || !subscriptionStatus) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
 
   try {
+    // Decode locationId to match raw slashes in MongoDB
+    locationId = decodeURIComponent(locationId);
+
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
