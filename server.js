@@ -302,12 +302,110 @@ app.post('/api/auto-posts/config/:businessId', async (req, res) => {
 // 3. Get Scheduled & Post History
 app.get('/api/auto-posts/history/:businessId', async (req, res) => {
   try {
-    // Return empty history array gracefully if model/collection isn't explicitly initialized
     res.json({ success: true, posts: [] });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// 4. Upgraded Test Generate Route with Real Reviews & Dynamic Theme Variety
+app.post('/api/auto-posts/test-generate', async (req, res) => {
+  try {
+    const { userId, businessId, locationName, category, topics, enableFestivals, enableReviewSpotlights } = req.body;
+
+    const bName = locationName || 'Our Business';
+    const bCat = category || 'Local Business';
+
+    let realReviewSnippet = '';
+    let reviewerName = '';
+
+    if (enableReviewSpotlights && userId) {
+      const user = await User.findById(userId);
+      if (user && user.accessToken) {
+        const targetLocation = (user.locations || []).find(l => l.locationId === businessId) || user.locations[0];
+        if (targetLocation && targetLocation.accountLocationPath) {
+          const liveData = await fetchLocationReviews(
+            user.accessToken,
+            targetLocation.accountLocationPath.split('/')[0] + '/' + targetLocation.accountLocationPath.split('/')[1],
+            targetLocation.accountLocationPath
+          );
+
+          const fiveStarReviews = (liveData.reviews || []).filter(r => 
+            (r.starRating === 'FIVE' || r.starRating === 5) && r.comment && r.comment.trim().length > 10
+          );
+
+          if (fiveStarReviews.length > 0) {
+            const selected = fiveStarReviews[Math.floor(Math.random() * fiveStarReviews.length)];
+            realReviewSnippet = selected.comment.trim();
+            reviewerName = (selected.reviewer && selected.reviewer.displayName) ? selected.reviewer.displayName : 'Happy Customer';
+          }
+        }
+      }
+    }
+
+    let postPrompt = `You are writing an official Google Business Profile post for "${bName}" (Category: ${bCat}).
+Focus Topics: ${topics || 'Quality service and customer satisfaction'}
+${enableFestivals ? 'Incorporate an upcoming or seasonal holiday greeting if appropriate.' : ''}`;
+
+    if (realReviewSnippet && reviewerName) {
+      postPrompt += `\nCRITICAL INSTRUCTION: Highlight this EXACT real customer review in the post body. Do NOT invent review text:
+Reviewer: "${reviewerName}"
+Review: "${realReviewSnippet}"`;
+    } else {
+      postPrompt += `\nDo NOT make up fake quotes or fake customer names. Focus purely on services, quality, and welcoming customers.`;
+    }
+
+    const postText = await generateAutoPostText(bName, bCat, postPrompt, false, false);
+
+    const designThemes = [
+      { bg: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', primary: '#38bdf8', accent: '#f59e0b' },
+      { bg: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)', primary: '#818cf8', accent: '#10b981' },
+      { bg: 'linear-gradient(135deg, #064e3b 0%, #022c22 100%)', primary: '#34d399', accent: '#fbbf24' },
+      { bg: 'linear-gradient(135deg, #4c0519 0%, #881337 100%)', primary: '#fb7185', accent: '#38bdf8' }
+    ];
+    const theme = designThemes[Math.floor(Math.random() * designThemes.length)];
+
+    const svgPrompt = `Generate raw SVG XML code for a commercial banner graphic:
+- Business Name: "${bName}"
+- Category: "${bCat}"
+- Key Topic: "${topics || 'Professional Services'}"
+${realReviewSnippet ? `- Feature Review Spotlight: "${realReviewSnippet.substring(0, 60)}..." by ${reviewerName}` : ''}
+
+Design Requirements:
+- ViewBox="0 0 800 600"
+- Background: ${theme.bg}
+- Primary Accent: ${theme.primary}, Secondary: ${theme.accent}
+- Draw highly relevant vector art icons representing ${bCat}.
+- Include clear bold typography for "${bName}".
+- Output ONLY valid raw <svg>...</svg> XML. No markdown wrappers.`;
+
+    const rawSvgText = await generateAutoPostText(bName, bCat, svgPrompt, false, false);
+
+    let cleanSvg = rawSvgText
+      .replace(/```xml/gi, '')
+      .replace(/```svg/gi, '')
+      .replace(/```/g, '')
+      .trim();
+
+    const svgMatch = cleanSvg.match(/<svg[\s\S]*?<\/svg>/i);
+    if (svgMatch) cleanSvg = svgMatch[0];
+
+    const base64Svg = Buffer.from(cleanSvg).toString('base64');
+    const imageUrl = `data:image/svg+xml;base64,${base64Svg}`;
+
+    res.json({
+      success: true,
+      postText: postText,
+      imageUrl: imageUrl,
+      reviewerUsed: reviewerName || null
+    });
+
+  } catch (err) {
+    console.error('Error in upgraded test-generate route:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
   try {
