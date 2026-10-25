@@ -715,25 +715,26 @@ app.post('/api/admin/update-subscription', async (req, res) => {
   let { userId, locationId, subscriptionStatus } = req.body;
 
   if (!userId || !locationId || !subscriptionStatus) {
-    return res.status(400).json({ error: 'Missing required parameters' });
+    return res.status(400).json({ success: false, error: 'Missing parameters' });
   }
 
   try {
-    // Decode locationId to match raw slashes in MongoDB
-    locationId = decodeURIComponent(locationId);
+    const rawLocId = decodeURIComponent(locationId);
 
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    // Atomic update directly targeting the matched subdocument in the locations array
+    const result = await User.updateOne(
+      { _id: userId, 'locations.locationId': rawLocId },
+      { $set: { 'locations.$.subscriptionStatus': subscriptionStatus } }
+    );
 
-    const targetLoc = user.locations.find(loc => loc.locationId === locationId);
-    if (!targetLoc) return res.status(404).json({ error: 'Location not found' });
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, error: 'User or Location not found' });
+    }
 
-    targetLoc.subscriptionStatus = subscriptionStatus;
-    await user.save();
-
-    res.json({ success: true, message: `Updated location to ${subscriptionStatus}` });
+    res.json({ success: true, message: `Updated location status to ${subscriptionStatus}` });
   } catch (err) {
-    res.status(500).json({ error: 'Server error updating subscription' });
+    console.error('Update subscription error:', err);
+    res.status(500).json({ success: false, error: 'Server error updating subscription' });
   }
 });
 
