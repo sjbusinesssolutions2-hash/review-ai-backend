@@ -444,10 +444,10 @@ app.get('/auth/google/callback',
       const userName = encodeURIComponent(user.displayName || 'User');
       const userEmail = encodeURIComponent(user.email || '');
 
-      res.redirect(`https://sjbusinesssolutions2-hash.github.io/inbox.html?userId=${user._id}&userName=${userName}&userEmail=${userEmail}`);
+      res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${user._id}&userName=${userName}&userEmail=${userEmail}`);
     } catch (err) {
       console.error('OAuth Callback Error:', err);
-      res.redirect(`https://sjbusinesssolutions2-hash.github.io/inbox.html?userId=${req.user._id}&userName=${encodeURIComponent(req.user.displayName || 'User')}`);
+      res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${req.user._id}&userName=${encodeURIComponent(req.user.displayName || 'User')}`);
     }
   }
 );
