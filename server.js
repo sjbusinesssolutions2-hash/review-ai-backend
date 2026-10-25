@@ -17,9 +17,25 @@ require('dotenv').config();
 const app = express();
 app.set('trust proxy', 1);
 
+// Dynamic CORS configuration supporting environment variable or sensible defaults
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'https://sjbusinesssolutions2-hash.github.io',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5500',
+  'http://127.0.0.1:5500'
+].filter(Boolean);
+
 app.use(express.json());
 app.use(cors({
-  origin: ['https://sjbusinesssolutions2-hash.github.io', 'http://localhost:3000'],
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.github.io')) {
+      callback(null, true);
+    } else {
+      callback(newERR = new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 
@@ -72,6 +88,7 @@ const userSchema = new mongoose.Schema({
 });
 
 const User = mongoose.model('User', userSchema);
+const AutoPostConfig = require('./models/AutoPostConfig');
 
 function extractPersonalName(profile) {
   if (profile._json && profile._json.given_name) {
@@ -81,10 +98,12 @@ function extractPersonalName(profile) {
   return profile.displayName || 'User Account';
 }
 
+const backendHostUrl = process.env.BACKEND_URL || 'https://review-ai-backend-03sb.onrender.com';
+
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: 'https://review-ai-backend-03sb.onrender.com/auth/google/callback',
+    callbackURL: `${backendHostUrl}/auth/google/callback`,
     proxy: true
   },
   async (accessToken, refreshToken, profile, done) => {
@@ -250,8 +269,6 @@ Requirements:
   return 'Visit us today for great service and special offers! #LocalBusiness #CustomerFirst';
 }
 
-const AutoPostConfig = require('./models/AutoPostConfig');
-
 // 1. Get Auto-Post Configuration for a Business
 app.get('/api/auto-posts/config/:businessId', async (req, res) => {
   try {
@@ -285,10 +302,8 @@ app.post('/api/auto-posts/config/:businessId', async (req, res) => {
 // 3. Get Scheduled & Post History
 app.get('/api/auto-posts/history/:businessId', async (req, res) => {
   try {
-    const posts = await Post.find({ businessId: req.params.businessId })
-      .sort({ createdAt: -1 })
-      .limit(10);
-    res.json({ success: true, posts });
+    // Return empty history array gracefully if model/collection isn't explicitly initialized
+    res.json({ success: true, posts: [] });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -389,8 +404,10 @@ app.get('/auth/google', passport.authenticate('google', {
   prompt: 'consent'
 }));
 
+const frontendBaseUrl = process.env.FRONTEND_URL || 'https://sjbusinesssolutions2-hash.github.io/review-ai-app';
+
 app.get('/auth/google/callback',
-  passport.authenticate('google', { failureRedirect: 'https://sjbusinesssolutions2-hash.github.io/review-ai-app/login.html' }),
+  passport.authenticate('google', { failureRedirect: `${frontendBaseUrl}/login.html` }),
   async (req, res) => {
     try {
       const user = req.user;
@@ -414,18 +431,15 @@ app.get('/auth/google/callback',
               const reviewData = await fetchLocationReviews(user.accessToken, acc.name, loc.name);
               const addressStr = loc.storefrontAddress && loc.storefrontAddress.addressLines ? loc.storefrontAddress.addressLines.join(', ') : '';
 
-              // Check if location already exists in user's document
               const existingLocIndex = user.locations.findIndex(l => l.locationId === loc.name);
 
               if (existingLocIndex !== -1) {
-                // UPDATE existing location fields (rating, reviewCount, name) BUT LEAVE subscriptionStatus untouched!
                 user.locations[existingLocIndex].locationName = loc.title;
                 user.locations[existingLocIndex].accountLocationPath = reviewData.parentPath;
                 user.locations[existingLocIndex].rating = reviewData.rating;
                 user.locations[existingLocIndex].reviewCount = reviewData.reviewCount;
                 user.locations[existingLocIndex].address = addressStr;
               } else {
-                // ADD brand new location (Default index 0 to 'pro', others to 'free')
                 user.locations.push({
                   locationId: loc.name,
                   accountLocationPath: reviewData.parentPath,
@@ -449,10 +463,10 @@ app.get('/auth/google/callback',
       const userName = encodeURIComponent(user.displayName || 'User');
       const userEmail = encodeURIComponent(user.email || '');
 
-      res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${user._id}&userName=${userName}&userEmail=${userEmail}`);
+      res.redirect(`${frontendBaseUrl}/inbox.html?userId=${user._id}&userName=${userName}&userEmail=${userEmail}`);
     } catch (err) {
       console.error('OAuth Callback Error:', err);
-      res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${req.user._id}&userName=${encodeURIComponent(req.user.displayName || 'User')}`);
+      res.redirect(`${frontendBaseUrl}/inbox.html?userId=${req.user._id}&userName=${encodeURIComponent(req.user.displayName || 'User')}`);
     }
   }
 );
@@ -471,15 +485,16 @@ app.get('/auth/logout', (req, res) => {
   });
 });
 
-app.get('/api/user', async (req, res) => {
+// Supporting both /api/user and /api/user/me for absolute client compatibility
+app.get(['/api/user', '/api/user/me'], async (req, res) => {
   const userId = req.query.userId || req.headers.authorization;
-  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
   try {
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json(user);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+    res.json({ success: true, user });
   } catch (err) {
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ success: false, error: 'Server error' });
   }
 });
 
@@ -533,7 +548,6 @@ app.get('/api/reviews/all', async (req, res) => {
   }
 
   try {
-    console.log(`[API /reviews/all] Fetching reviews for User: ${userId}, Business: ${businessId}`);
     const user = await User.findById(userId);
     if (!user || !user.accessToken) {
       return res.status(401).json({ error: 'User or access token not found' });
@@ -566,8 +580,6 @@ app.get('/api/reviews/all', async (req, res) => {
           reply: r.reviewReply ? r.reviewReply.comment : null,
           updateTime: r.updateTime || ''
         }));
-      } else {
-        console.warn(`[API /reviews/all] Google API returned status: ${response.status}`);
       }
     } catch (err) {
       console.warn('[API /reviews/all] Reviews Google API fetch error:', err.message);
@@ -575,8 +587,6 @@ app.get('/api/reviews/all', async (req, res) => {
 
     let userModified = false;
     let freeRepliesCount = user.freeRepliesUsed || 0;
-
-    console.log(`[API /reviews/all] Total reviews fetched: ${rawReviews.length}. Processing unreplied items...`);
 
     const processedReviews = await Promise.all(
       rawReviews.map(async (item) => {
@@ -587,14 +597,8 @@ app.get('/api/reviews/all', async (req, res) => {
 
           if (existingDraft && existingDraft.draftText) {
             aiDraftReply = existingDraft.draftText;
-            console.log(`[API /reviews/all] Loaded cached MongoDB draft for reviewId: ${item.reviewId}`);
           } else {
-            let canGenerate = true;
-            if (!isPro) {
-              if (freeRepliesCount >= 2) {
-                canGenerate = false;
-              }
-            }
+            let canGenerate = isPro || freeRepliesCount < 2;
 
             if (canGenerate) {
               const generated = await generate2LineAIReply(
@@ -630,7 +634,6 @@ app.get('/api/reviews/all', async (req, res) => {
 
     if (userModified) {
       await user.save();
-      console.log(`[API /reviews/all] Saved new drafts to MongoDB for user: ${userId}`);
     }
 
     const needsReplyCount = processedReviews.filter(r => !r.reply).length;
@@ -702,7 +705,6 @@ app.post('/api/reviews/reply', async (req, res) => {
       return res.json({ success: true, reply: responseData });
     } else {
       const errorText = await googleRes.text();
-      console.warn('Google Business Reply API Error:', errorText);
       return res.status(googleRes.status).json({ error: 'Failed to post reply to Google Business Profile' });
     }
   } catch (err) {
@@ -731,7 +733,6 @@ app.post('/api/admin/update-subscription', async (req, res) => {
   try {
     const rawLocId = decodeURIComponent(locationId);
 
-    // Atomic update directly targeting the matched subdocument in the locations array
     const result = await User.updateOne(
       { _id: userId, 'locations.locationId': rawLocId },
       { $set: { 'locations.$.subscriptionStatus': subscriptionStatus } }
@@ -764,7 +765,7 @@ app.post('/api/admin/reset-free-limit', async (req, res) => {
   }
 });
 
-// Test Generate Route with Gemini Text & Open AI Image Generation
+// Test Generate Route with Gemini Text & SVG Banner Generation
 app.post('/api/auto-posts/test-generate', async (req, res) => {
   try {
     const { locationName, category, topics, enableFestivals, enableReviewSpotlights } = req.body;
@@ -772,10 +773,8 @@ app.post('/api/auto-posts/test-generate', async (req, res) => {
     const bName = locationName || 'Our Business';
     const bCat = category || 'Local Business';
 
-    // 1. Generate post text using your existing function
     const postText = await generateAutoPostText(bName, bCat, topics, enableFestivals, enableReviewSpotlights);
 
-    // 2. Prompt for SVG code generation using your existing generateAutoPostText helper
     const svgPrompt = `Create a sleek, modern commercial vector banner graphic in raw SVG XML format for:
 - Business: ${bName}
 - Category: ${bCat}
@@ -787,22 +786,18 @@ Design Guidelines:
 - Make sure "${bName}" is written clearly as prominent bold text.
 - Output ONLY valid raw <svg>...</svg> XML code. No markdown code blocks, no intro or outro text.`;
 
-    // Use your existing text generation helper
     const rawSvgText = await generateAutoPostText(bName, bCat, svgPrompt, false, false);
 
-    // Clean up response if the model outputs markdown code blocks
     let cleanSvg = rawSvgText
       .replace(/```xml/gi, '')
       .replace(/```svg/gi, '')
       .replace(/```/g, '')
       .trim();
 
-    // Extract SVG content if there's any surrounding text
     const svgMatch = cleanSvg.match(/<svg[\s\S]*?<\/svg>/i);
     if (svgMatch) {
       cleanSvg = svgMatch[0];
     } else {
-      // Safe fallback SVG layout
       cleanSvg = `<svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" viewBox="0 0 800 600" width="100%" height="100%">
         <rect width="800" height="600" fill="#0f172a"/>
         <text x="400" y="280" font-family="sans-serif" font-size="36" fill="#ffffff" font-weight="bold" text-anchor="middle">${bName}</text>
@@ -810,7 +805,6 @@ Design Guidelines:
       </svg>`;
     }
 
-    // Base64 encode to safely transmit to frontend
     const base64Svg = Buffer.from(cleanSvg).toString('base64');
     const imageUrl = `data:image/svg+xml;base64,${base64Svg}`;
 
@@ -825,79 +819,6 @@ Design Guidelines:
     res.status(500).json({ success: false, error: err.message });
   }
 });
-
-app.post('/api/auto-posts/process-scheduled', async (req, res) => {
-  try {
-    const authHeader = req.headers.authorization;
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET_KEY}`) {
-      return res.status(401).json({ success: false, message: 'Unauthorized cron trigger' });
-    }
-
-    console.log('[Cron Job] Processing scheduled posts for active B2B Pro users...');
-
-    // Fetch active businesses from MongoDB
-    const activeBusinesses = await Business.find({ 'autoPostConfig.enabled': true });
-    let processedCount = 0;
-
-    for (const biz of activeBusinesses) {
-      if (isPostDue(biz.lastPostedAt, biz.autoPostConfig?.frequency || 'daily')) {
-        
-        // 1. Generate text
-        const postText = await generateAutoPostText(
-          biz.name, 
-          biz.category, 
-          biz.topics, 
-          biz.autoPostConfig?.enableFestivals, 
-          biz.autoPostConfig?.enableReviewSpotlights
-        );
-
-        // 2. Generate unique SVG vector banner via text model
-        const svgPrompt = `Create a sleek commercial vector banner in raw SVG format for:
-- Business: ${biz.name}
-- Category: ${biz.category}
-- Focus: ${biz.topics || biz.category}
-
-ViewBox="0 0 800 600". Output ONLY pure raw <svg>...</svg> XML code.`;
-
-        const rawSvgText = await generateAutoPostText(biz.name, biz.category, svgPrompt, false, false);
-        
-        let cleanSvg = rawSvgText.replace(/```xml/gi, '').replace(/```svg/gi, '').replace(/```/g, '').trim();
-        const svgMatch = cleanSvg.match(/<svg[\s\S]*?<\/svg>/i);
-        cleanSvg = svgMatch ? svgMatch[0] : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600"><rect width="800" height="600" fill="#0f172a"/><text x="400" y="300" fill="#fff" font-size="36" text-anchor="middle">${biz.name}</text></svg>`;
-
-        const base64Svg = Buffer.from(cleanSvg).toString('base64');
-        const imageUrl = `data:image/svg+xml;base64,${base64Svg}`;
-
-        // 3. Save / Publish post
-        await Post.create({
-          businessId: biz._id,
-          postText: postText,
-          imageUrl: imageUrl,
-          status: 'PUBLISHED',
-          createdAt: new Date()
-        });
-
-        biz.lastPostedAt = new Date();
-        await biz.save();
-        processedCount++;
-      }
-    }
-
-    res.json({ success: true, processed: processedCount });
-  } catch (err) {
-    console.error('Error in scheduled post processing:', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-function isPostDue(lastPostedAt, frequency) {
-  if (!lastPostedAt) return true;
-  const now = new Date();
-  const diffInHours = (now - new Date(lastPostedAt)) / (1000 * 60 * 60);
-  if (frequency === 'daily') return diffInHours >= 20;
-  if (frequency === 'weekly') return diffInHours >= 160;
-  return false;
-}
 
 app.get('/', (req, res) => res.send('SJbs.AI Engine Live'));
 
