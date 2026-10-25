@@ -294,7 +294,6 @@ app.get('/api/auto-posts/history/:businessId', async (req, res) => {
   }
 });
 
-
 async function fetchLocationReviews(accessToken, accountName, locationName) {
   try {
     let parentPath = locationName;
@@ -391,7 +390,7 @@ app.get('/auth/google', passport.authenticate('google', {
 }));
 
 app.get('/auth/google/callback',
-  passport.authenticate('google', { failureRedirect: 'https://sjbusinesssolutions2-hash.github.io/review-ai-app/login.html' }),
+  passport.authenticate('google', { failureRedirect: 'https://sjbusinesssolutions2-hash.github.io/login.html' }),
   async (req, res) => {
     try {
       const user = req.user;
@@ -403,6 +402,7 @@ app.get('/auth/google/callback',
       const accounts = accountsRes.data.accounts || [];
 
       let fetchedLocations = [];
+      const existingLocations = user.locations || [];
 
       for (const acc of accounts) {
         try {
@@ -416,6 +416,11 @@ app.get('/auth/google/callback',
             for (const [idx, loc] of locsRes.data.locations.entries()) {
               const reviewData = await fetchLocationReviews(user.accessToken, acc.name, loc.name);
 
+              // Preserve database subscription state across logins
+              const existingLoc = existingLocations.find(l => l.locationId === loc.name);
+              const defaultStatus = idx === 0 ? 'pro' : 'free';
+              const finalStatus = existingLoc ? existingLoc.subscriptionStatus : defaultStatus;
+
               fetchedLocations.push({
                 locationId: loc.name,
                 accountLocationPath: reviewData.parentPath,
@@ -423,8 +428,8 @@ app.get('/auth/google/callback',
                 rating: reviewData.rating,
                 reviewCount: reviewData.reviewCount,
                 address: loc.storefrontAddress && loc.storefrontAddress.addressLines ? loc.storefrontAddress.addressLines.join(', ') : '',
-                subscriptionStatus: idx === 0 ? 'pro' : 'free',
-                autoReplyEnabled: true
+                subscriptionStatus: finalStatus,
+                autoReplyEnabled: existingLoc ? existingLoc.autoReplyEnabled : true
               });
             }
           }
@@ -439,10 +444,10 @@ app.get('/auth/google/callback',
       const userName = encodeURIComponent(user.displayName || 'User');
       const userEmail = encodeURIComponent(user.email || '');
 
-      res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${user._id}&userName=${userName}&userEmail=${userEmail}`);
+      res.redirect(`https://sjbusinesssolutions2-hash.github.io/inbox.html?userId=${user._id}&userName=${userName}&userEmail=${userEmail}`);
     } catch (err) {
       console.error('OAuth Callback Error:', err);
-      res.redirect(`https://sjbusinesssolutions2-hash.github.io/review-ai-app/inbox.html?userId=${req.user._id}&userName=${encodeURIComponent(req.user.displayName || 'User')}`);
+      res.redirect(`https://sjbusinesssolutions2-hash.github.io/inbox.html?userId=${req.user._id}&userName=${encodeURIComponent(req.user.displayName || 'User')}`);
     }
   }
 );
@@ -853,7 +858,7 @@ ViewBox="0 0 800 600". Output ONLY pure raw <svg>...</svg> XML code.`;
         
         let cleanSvg = rawSvgText.replace(/```xml/gi, '').replace(/```svg/gi, '').replace(/```/g, '').trim();
         const svgMatch = cleanSvg.match(/<svg[\s\S]*?<\/svg>/i);
-        cleanSvg = svgMatch ? svgMatch[0] : `<svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" viewBox="0 0 800 600"><rect width="800" height="600" fill="#0f172a"/><text x="400" y="300" fill="#fff" font-size="36" text-anchor="middle">${biz.name}</text></svg>`;
+        cleanSvg = svgMatch ? svgMatch[0] : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600"><rect width="800" height="600" fill="#0f172a"/><text x="400" y="300" fill="#fff" font-size="36" text-anchor="middle">${biz.name}</text></svg>`;
 
         const base64Svg = Buffer.from(cleanSvg).toString('base64');
         const imageUrl = `data:image/svg+xml;base64,${base64Svg}`;
