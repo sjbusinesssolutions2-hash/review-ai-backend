@@ -390,7 +390,7 @@ app.get('/auth/google', passport.authenticate('google', {
 }));
 
 app.get('/auth/google/callback',
-  passport.authenticate('google', { failureRedirect: 'https://sjbusinesssolutions2-hash.github.io/login.html' }),
+  passport.authenticate('google', { failureRedirect: 'https://sjbusinesssolutions2-hash.github.io/review-ai-app/login.html' }),
   async (req, res) => {
     try {
       const user = req.user;
@@ -400,9 +400,6 @@ app.get('/auth/google/callback',
       const mybusinessaccountmanagement = google.mybusinessaccountmanagement({ version: 'v1', auth: oauth2Client });
       const accountsRes = await mybusinessaccountmanagement.accounts.list();
       const accounts = accountsRes.data.accounts || [];
-
-      let fetchedLocations = [];
-      const existingLocations = user.locations || [];
 
       for (const acc of accounts) {
         try {
@@ -415,22 +412,31 @@ app.get('/auth/google/callback',
           if (locsRes.data.locations) {
             for (const [idx, loc] of locsRes.data.locations.entries()) {
               const reviewData = await fetchLocationReviews(user.accessToken, acc.name, loc.name);
+              const addressStr = loc.storefrontAddress && loc.storefrontAddress.addressLines ? loc.storefrontAddress.addressLines.join(', ') : '';
 
-              // Preserve database subscription state across logins
-              const existingLoc = existingLocations.find(l => l.locationId === loc.name);
-              const defaultStatus = idx === 0 ? 'pro' : 'free';
-              const finalStatus = existingLoc ? existingLoc.subscriptionStatus : defaultStatus;
+              // Check if location already exists in user's document
+              const existingLocIndex = user.locations.findIndex(l => l.locationId === loc.name);
 
-              fetchedLocations.push({
-                locationId: loc.name,
-                accountLocationPath: reviewData.parentPath,
-                locationName: loc.title,
-                rating: reviewData.rating,
-                reviewCount: reviewData.reviewCount,
-                address: loc.storefrontAddress && loc.storefrontAddress.addressLines ? loc.storefrontAddress.addressLines.join(', ') : '',
-                subscriptionStatus: finalStatus,
-                autoReplyEnabled: existingLoc ? existingLoc.autoReplyEnabled : true
-              });
+              if (existingLocIndex !== -1) {
+                // UPDATE existing location fields (rating, reviewCount, name) BUT LEAVE subscriptionStatus untouched!
+                user.locations[existingLocIndex].locationName = loc.title;
+                user.locations[existingLocIndex].accountLocationPath = reviewData.parentPath;
+                user.locations[existingLocIndex].rating = reviewData.rating;
+                user.locations[existingLocIndex].reviewCount = reviewData.reviewCount;
+                user.locations[existingLocIndex].address = addressStr;
+              } else {
+                // ADD brand new location (Default index 0 to 'pro', others to 'free')
+                user.locations.push({
+                  locationId: loc.name,
+                  accountLocationPath: reviewData.parentPath,
+                  locationName: loc.title,
+                  rating: reviewData.rating,
+                  reviewCount: reviewData.reviewCount,
+                  address: addressStr,
+                  subscriptionStatus: user.locations.length === 0 ? 'pro' : 'free',
+                  autoReplyEnabled: true
+                });
+              }
             }
           }
         } catch (e) {
@@ -438,7 +444,6 @@ app.get('/auth/google/callback',
         }
       }
 
-      user.locations = fetchedLocations;
       await user.save();
 
       const userName = encodeURIComponent(user.displayName || 'User');
