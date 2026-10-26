@@ -392,48 +392,117 @@ async function generatePostImageWithFallback(imagePrompt, businessName) {
     console.log('[Image Engine] Switching to Secondary Engine (Pollinations FLUX)...');
     return getPollinationsFluxUrl(imagePrompt);
   } catch (polError) {
-    console.warn('[Image Engine] Secondary Engine Failed:', polError.message);
+// 1. Primary Engine: Hugging Face FLUX.1 with retries
+async function tryHuggingFaceFlux(promptText, retries = 2, delayMs = 3000) {
+  const hfKey = process.env.HUGGINGFACE_API_KEY;
+  if (!hfKey) {
+    throw new Error('HUGGINGFACE_API_KEY environment variable is not configured.');
   }
 
-  // 3. Tertiary Fail-Safe: Dynamic Clean SVG Banner (Business Name Only)
-  console.log('[Image Engine] All image APIs unavailable. Rendering Dynamic SVG Fail-safe...');
-  return generateFallbackSvgBanner(businessName);
+  for (let attempt = 1; attempt <= retries + 1; attempt++) {
+    try {
+      const response = await fetch(
+        "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
+        {
+          headers: {
+            Authorization: `Bearer ${hfKey}`,
+            "Content-Type": "application/json",
+          },
+          method: "POST",
+          body: JSON.stringify({ inputs: promptText }),
+        }
+      );
+
+      if (response.ok) {
+        const arrayBuffer = await response.arrayBuffer();
+        const base64Image = Buffer.from(arrayBuffer).toString('base64');
+        return `data:image/jpeg;base64,${base64Image}`;
+      }
+
+      const errBody = await response.text().catch(() => '');
+      if (response.status === 429 || response.status === 401) {
+        throw new Error(`HF Permanent Error (${response.status}): ${errBody}`);
+      }
+
+      if (attempt <= retries) {
+        console.warn(`[Image Engine] HF temporary status ${response.status}. Retrying... (Attempt ${attempt})`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        continue;
+      }
+
+      throw new Error(`HF API error: ${response.status} ${response.statusText}`);
+    } catch (err) {
+      if (err.message.includes('HF Permanent Error') || attempt > retries) {
+        throw err;
+      }
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
 }
 
-function getPollinationsFluxUrl(promptText) {
-  const encodedPrompt = encodeURIComponent(promptText);
-  const seed = Math.floor(Math.random() * 9999999);
-  return `https://image.pollinations.ai/prompt/${encodedPrompt}?model=flux&width=800&height=600&nologo=true&seed=${seed}`;
-}
+// 2. High-End Branded SVG Banner (No watermarks, perfectly clean typography)
+function generateBrandedSvgBanner(businessName, category) {
+  const safeName = (businessName || 'Our Business').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const safeCat = (category || 'Professional Services').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-function generateFallbackSvgBanner(businessName) {
-  const safeName = (businessName || 'Our Business')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-
-  const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
-  <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0f172a"/>
-      <stop offset="50%" stop-color="#1e293b"/>
-      <stop offset="100%" stop-color="#0284c7"/>
-    </linearGradient>
-    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="10" stdDeviation="15" flood-color="#000000" flood-opacity="0.5"/>
-    </filter>
-  </defs>
-  <rect width="800" height="600" fill="url(#bgGrad)"/>
-  <circle cx="700" cy="100" r="180" fill="#ffffff" opacity="0.03"/>
-  <circle cx="100" cy="500" r="220" fill="#0284c7" opacity="0.1"/>
-  <g filter="url(#shadow)">
-    <rect x="80" y="200" width="640" height="200" rx="20" fill="#0f172a" fill-opacity="0.85" stroke="#38bdf8" stroke-width="1.5" stroke-opacity="0.3"/>
-  </g>
-  <text x="400" y="310" text-anchor="middle" fill="#ffffff" font-family="system-ui, -apple-system, sans-serif" font-weight="700" font-size="36" letter-spacing="0.5">${safeName}</text>
-</svg>`.trim();
+  const svgContent = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+      <defs>
+        <linearGradient id="proGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#090d16"/>
+          <stop offset="50%" stop-color="#111827"/>
+          <stop offset="100%" stop-color="#0f172a"/>
+        </linearGradient>
+        <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#38bdf8"/>
+          <stop offset="100%" stop-color="#0284c7"/>
+        </linearGradient>
+        <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="120%">
+          <feDropShadow dx="0" dy="16" stdDeviation="24" flood-color="#000000" flood-opacity="0.6"/>
+        </filter>
+      </defs>
+      
+      <!-- Background -->
+      <rect width="800" height="600" fill="url(#proGrad)"/>
+      
+      <!-- Ambient Glow Accents -->
+      <circle cx="700" cy="100" r="200" fill="#0284c7" opacity="0.12" filter="blur(40px)"/>
+      <circle cx="100" cy="500" r="240" fill="#38bdf8" opacity="0.08" filter="blur(50px)"/>
+      
+      <!-- Central Card Frame -->
+      <g filter="url(#cardShadow)">
+        <rect x="70" y="160" width="660" height="280" rx="24" fill="#0b1329" fill-opacity="0.9" stroke="url(#accentGrad)" stroke-width="2" stroke-opacity="0.4"/>
+      </g>
+      
+      <!-- Top Badge / Indicator -->
+      <rect x="340" y="210" width="120" height="32" rx="16" fill="#0284c7" fill-opacity="0.2" stroke="#38bdf8" stroke-opacity="0.4" stroke-width="1"/>
+      <text x="400" y="231" text-anchor="middle" fill="#38bdf8" font-family="system-ui, sans-serif" font-weight="600" font-size="12" letter-spacing="1.5">VERIFIED</text>
+      
+      <!-- Business Name -->
+      <text x="400" y="295" text-anchor="middle" fill="#ffffff" font-family="system-ui, -apple-system, sans-serif" font-weight="800" font-size="38" letter-spacing="0.5">
+        ${safeName}
+      </text>
+      
+      <!-- Category Subtitle -->
+      <text x="400" y="340" text-anchor="middle" fill="#94a3b8" font-family="system-ui, -apple-system, sans-serif" font-weight="500" font-size="18" letter-spacing="0.5">
+        ${safeCat}
+      </text>
+    </svg>
+  `.trim();
 
   const base64Svg = Buffer.from(svgContent).toString('base64');
   return `data:image/svg+xml;base64,${base64Svg}`;
+}
+
+// 3. Direct Pipeline: Hugging Face -> Clean Branded SVG (No Pollinations)
+async function generatePostImageWithFallback(imagePrompt, businessName, category) {
+  try {
+    console.log('[Image Engine] Attempting Primary Engine (Hugging Face FLUX.1)...');
+    return await tryHuggingFaceFlux(imagePrompt);
+  } catch (hfError) {
+    console.warn('[Image Engine] Primary HF Engine unavailable. Switching to Clean Branded SVG Fail-safe:', hfError.message);
+    return generateBrandedSvgBanner(businessName, category);
+  }
 }
 
 // 1. Get Auto-Post Configuration for a Business
