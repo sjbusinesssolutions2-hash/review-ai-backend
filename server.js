@@ -325,33 +325,79 @@ Instructions:
   return `Cinematic commercial photography of ${category || 'services'} at "${locationName || 'Our Store'}", detailed craftsmanship, natural workshop/store lighting, shallow depth of field, 4k commercial photography, authentic local feel, no text, no watermarks, photorealistic`;
 }
 
-// Multi-Engine Fallback Pipeline for Photorealistic Images
-async function tryHuggingFaceFlux(promptText) {
+// Upgraded Primary Engine with Retry Logic for Cold Starts & Minor Blips
+async function tryHuggingFaceFlux(promptText, retries = 2, delayMs = 3000) {
   const hfKey = process.env.HUGGINGFACE_API_KEY;
   if (!hfKey) {
     throw new Error('HUGGINGFACE_API_KEY environment variable is not configured.');
   }
 
-  const response = await fetch(
-    "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
-    {
-      headers: {
-        Authorization: `Bearer ${hfKey}`,
-        "Content-Type": "application/json",
-      },
-      method: "POST",
-      body: JSON.stringify({ inputs: promptText }),
-    }
-  );
+  for (let attempt = 1; attempt <= retries + 1; attempt++) {
+    try {
+      const response = await fetch(
+        "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
+        {
+          headers: {
+            Authorization: `Bearer ${hfKey}`,
+            "Content-Type": "application/json",
+          },
+          method: "POST",
+          body: JSON.stringify({ inputs: promptText }),
+        }
+      );
 
-  if (!response.ok) {
-    const errBody = await response.text().catch(() => '');
-    throw new Error(`HF API error: ${response.status} ${response.statusText} - ${errBody}`);
+      if (response.ok) {
+        const arrayBuffer = await response.arrayBuffer();
+        const base64Image = Buffer.from(arrayBuffer).toString('base64');
+        return `data:image/jpeg;base64,${base64Image}`;
+      }
+
+      const errBody = await response.text().catch(() => '');
+      
+      // If it's a permanent error (Rate limit 429 or Auth 401), don't retry—fall back immediately
+      if (response.status === 429 || response.status === 401) {
+        throw new Error(`HF Permanent Error (${response.status}): ${errBody}`);
+      }
+
+      // For temporary errors (like 503 model loading), throw to trigger retry
+      if (attempt <= retries) {
+        console.warn(`[Image Engine] HF temporary status ${response.status}. Retrying in ${delayMs / 1000}s (Attempt ${attempt}/${retries})...`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        continue;
+      }
+
+      throw new Error(`HF API error: ${response.status} ${response.statusText} - ${errBody}`);
+    } catch (err) {
+      if (err.message.includes('HF Permanent Error') || attempt > retries) {
+        throw err;
+      }
+      console.warn(`[Image Engine] HF Attempt ${attempt} failed (${err.message}). Retrying...`);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
+// Master Fallback Pipeline with Strict Priority Enforcement
+async function generatePostImageWithFallback(imagePrompt, businessName) {
+  // 1. Primary Priority: Hugging Face FLUX.1 (with built-in retry attempts)
+  try {
+    console.log('[Image Engine] Attempting Primary Engine (Hugging Face FLUX.1 with retries)...');
+    return await tryHuggingFaceFlux(imagePrompt);
+  } catch (hfError) {
+    console.warn('[Image Engine] Primary HF Engine Exhausted Retries:', hfError.message);
   }
 
-  const arrayBuffer = await response.arrayBuffer();
-  const base64Image = Buffer.from(arrayBuffer).toString('base64');
-  return `data:image/jpeg;base64,${base64Image}`;
+  // 2. Secondary Fallback: Pollinations FLUX Endpoint (Only if Primary truly gave up)
+  try {
+    console.log('[Image Engine] Switching to Secondary Engine (Pollinations FLUX)...');
+    return getPollinationsFluxUrl(imagePrompt);
+  } catch (polError) {
+    console.warn('[Image Engine] Secondary Engine Failed:', polError.message);
+  }
+
+  // 3. Tertiary Fail-Safe: Dynamic Clean SVG Banner (Business Name Only)
+  console.log('[Image Engine] All image APIs unavailable. Rendering Dynamic SVG Fail-safe...');
+  return generateFallbackSvgBanner(businessName);
 }
 
 function getPollinationsFluxUrl(promptText) {
@@ -388,28 +434,6 @@ function generateFallbackSvgBanner(businessName) {
 
   const base64Svg = Buffer.from(svgContent).toString('base64');
   return `data:image/svg+xml;base64,${base64Svg}`;
-}
-
-async function generatePostImageWithFallback(imagePrompt, businessName) {
-  // Primary Choice: Hugging Face FLUX.1
-  try {
-    console.log('[Image Engine] Attempting Primary Engine (Hugging Face FLUX.1)...');
-    return await tryHuggingFaceFlux(imagePrompt);
-  } catch (hfError) {
-    console.warn('[Image Engine] Primary HF Engine Failed/Quota Exceeded:', hfError.message);
-  }
-
-  // Secondary Fallback: Pollinations FLUX Endpoint
-  try {
-    console.log('[Image Engine] Switching to Secondary Engine (Pollinations FLUX)...');
-    return getPollinationsFluxUrl(imagePrompt);
-  } catch (polError) {
-    console.warn('[Image Engine] Secondary Engine Failed:', polError.message);
-  }
-
-  // Tertiary Fail-Safe: Dynamic Clean SVG Banner (Business Name Only)
-  console.log('[Image Engine] External image APIs unavailable. Rendering Dynamic SVG Fail-safe...');
-  return generateFallbackSvgBanner(businessName);
 }
 
 // 1. Get Auto-Post Configuration for a Business
