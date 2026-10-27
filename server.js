@@ -964,7 +964,7 @@ app.post('/api/admin/reset-free-limit', async (req, res) => {
 });
 
 // Automated Background Worker for Auto-Posting (Runs every hour)
-cron.schedule('0 * * * *', async () => {
+cron.schedule('*/15 * * * *', async () => {
   console.log('[Auto-Post Worker] Checking active configurations...');
   try {
     const activeConfigs = await AutoPostConfig.find({ enabled: true });
