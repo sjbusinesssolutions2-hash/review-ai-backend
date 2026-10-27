@@ -618,6 +618,9 @@ app.get('/auth/google/callback',
 
       for (const acc of accounts) {
         try {
+          // Extract numerical account ID (e.g. 'accounts/123' -> '123')
+          const accountId = acc.name.split('/')[1];
+
           const mybusinessinfo = google.mybusinessbusinessinformation({ version: 'v1', auth: oauth2Client });
           const locsRes = await mybusinessinfo.accounts.locations.list({
             parent: acc.name,
@@ -625,22 +628,28 @@ app.get('/auth/google/callback',
           });
 
           if (locsRes.data.locations) {
-            for (const [idx, loc] of locsRes.data.locations.entries()) {
+            for (const loc of locsRes.data.locations) {
+              // Extract numerical location ID (e.g. 'locations/456' -> '456')
+              const locationId = loc.name.split('/')[1];
+
+              // STRICT V4 PATH REQUIRED FOR POSTS
+              const fullAccountLocationPath = `accounts/${accountId}/locations/${locationId}`;
+
               const reviewData = await fetchLocationReviews(user.accessToken, acc.name, loc.name);
               const addressStr = loc.storefrontAddress && loc.storefrontAddress.addressLines ? loc.storefrontAddress.addressLines.join(', ') : '';
 
-              const existingLocIndex = user.locations.findIndex(l => l.locationId === loc.name);
+              const existingLocIndex = user.locations.findIndex(l => l.locationId === loc.name || l.accountLocationPath === fullAccountLocationPath);
 
               if (existingLocIndex !== -1) {
                 user.locations[existingLocIndex].locationName = loc.title;
-                user.locations[existingLocIndex].accountLocationPath = reviewData.parentPath;
+                user.locations[existingLocIndex].accountLocationPath = fullAccountLocationPath; // Set strict v4 path
                 user.locations[existingLocIndex].rating = reviewData.rating;
                 user.locations[existingLocIndex].reviewCount = reviewData.reviewCount;
                 user.locations[existingLocIndex].address = addressStr;
               } else {
                 user.locations.push({
                   locationId: loc.name,
-                  accountLocationPath: reviewData.parentPath,
+                  accountLocationPath: fullAccountLocationPath, // Set strict v4 path
                   locationName: loc.title,
                   rating: reviewData.rating,
                   reviewCount: reviewData.reviewCount,
