@@ -285,75 +285,54 @@ Requirements:
   return `Visit us today for great service and special offers! #LocalBusiness #CustomerFirst`;
 }
 
-// Dedicated AI SVG Banner Generator (Light Theme, Editorial, Festival Aware)
+// Pure AI-Driven Dynamic SVG Banner Generator (Zero Hardcoded Fallbacks)
 async function generateAiPosterSvg(locationName, category, topics, enableFestivals) {
   const bName = locationName || 'Our Business';
   const bCat = category || 'Local Business';
   let headline = topics && topics.trim().length > 3 ? topics.trim() : `Expert ${bCat}`;
-  if (headline.length > 45) headline = headline.substring(0, 42) + '...';
+  if (headline.length > 50) headline = headline.substring(0, 47) + '...';
 
   const now = new Date();
   const currentDate = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   const seasonalHint = getSeasonalFestivalInfo(now);
   
   const festivalInstruction = enableFestivals 
-    ? `FESTIVAL THEME ACTIVE: Reflect seasonal celebration (${seasonalHint}) with warm celebratory accents.` 
-    : `Standard professional spotlight banner.`;
+    ? `FESTIVAL THEME ACTIVE: The banner must dynamically reflect the current festive season (${seasonalHint}) with elegant, warm celebratory accents matching the date.` 
+    : `Standard professional editorial spotlight banner.`;
 
-  const prompt = `Generate a clean, professional, minimalistic light-themed 1080x1080 square social media banner SVG for "${bName}" (${bCat}).
+  const prompt = `You are an elite, world-class graphic designer creating a high-end, minimalistic 1080x1080 square vector banner SVG for "${bName}" (${bCat}).
 Headline: "${headline}".
 ${festivalInstruction}
-Design Guidelines (Handmade graphic designer feel, NOT AI-generated):
-1. Return ONLY valid SVG code (<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">...</svg>) without markdown formatting or backticks.
-2. Style: Flat, minimalistic vector design with clean light editorial palettes (e.g. warm cream background #faf8f5, bold dark typography, vibrant accent badges). NO dark mode, NO glowing lights, NO blurry neon effects.
-3. Content: Display business name prominently, clean subtitle, and truthful workshop call-to-action like "Walk-Ins Welcome - Visit Our Workshop" (NO online booking or e-commerce claims).`;
+
+DESIGN & AESTHETIC DIRECTIVES (Inspired by high-end editorial layouts, warm matte vintage/cream/mustard tones, generous whitespace, and sophisticated typography):
+1. Return ONLY valid, clean SVG code (<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">...</svg>) without markdown formatting, without backticks, without any explanation.
+2. Style: Minimalist, bright (NO dark mode, NO disco neon effects, NO glowing radial gradients). Use sophisticated matte background tones, generous whitespace, crisp structural hierarchy, and bold editorial typography.
+3. Content Rules: 
+   - Showcase the business name ("${bName}") and category ("${bCat}").
+   - Integrate the headline/topic organically.
+   - NEVER include customer ratings, review stars, or ratings counts.
+   - Include a truthful workshop call-to-action like "Walk-Ins Welcome • Direct Workshop Service" (NEVER mention online booking or e-commerce).
+4. Technical: Ensure flawless XML syntax, proper closing tags, and valid URI attributes.`;
 
   if (geminiKeys && geminiKeys.length > 0) {
-    const aiClient = new GoogleGenAI({ apiKey: geminiKeys[0] });
-    try {
-      const res = await aiClient.models.generateContent({ model: 'gemini-3.5-flash', contents: prompt });
-      let svg = res.text || '';
-      svg = svg.replace(/```xml/g, '').replace(/```svg/g, '').replace(/```/g, '').trim();
-      if (svg.startsWith('<svg') && svg.endsWith('</svg>')) {
-        return `data:image/svg+xml;base64,${Buffer.from(svg, 'utf-8').toString('base64')}`;
+    for (let k = 0; k < geminiKeys.length; k++) {
+      const aiClient = new GoogleGenAI({ apiKey: geminiKeys[k] });
+      try {
+        const response = await aiClient.models.generateContent({ model: 'gemini-3.5-flash', contents: prompt });
+        let svg = response.text || '';
+        svg = svg.replace(/```xml/g, '').replace(/```svg/g, '').replace(/```/g, '').trim();
+        if (svg.startsWith('<svg') && svg.endsWith('</svg>')) {
+          return `data:image/svg+xml;base64,${Buffer.from(svg, 'utf-8').toString('base64')}`;
+        }
+      } catch (err) {
+        console.warn(`[Gemini SVG] Key ${k + 1} failed: ${err.message}`);
       }
-    } catch (err) {}
+    }
   }
 
-  // Clean, Flat, Minimalist Light Designer Fallback SVG
-  const lightDesignerPalettes = enableFestivals ? [
-    { bg: '#fffbeb', cardBg: '#fef3c7', accent: '#d97706', text: '#451a03', muted: '#b45309', border: '#fde68a' },
-    { bg: '#fdf8f6', cardBg: '#faedcd', accent: '#bc6c25', text: '#381d05', muted: '#8d5524', border: '#e6ccb2' }
-  ] : [
-    { bg: '#faf8f5', cardBg: '#f2eae1', accent: '#ea580c', text: '#1c1917', muted: '#78716c', border: '#e7e5e4' },
-    { bg: '#f0fdf4', cardBg: '#dcfce7', accent: '#16a34a', text: '#052e16', muted: '#166534', border: '#bbf7d0' },
-    { bg: '#f8fafc', cardBg: '#e2e8f0', accent: '#0284c7', text: '#0f172a', muted: '#475569', border: '#cbd5e1' }
-  ];
-  const p = lightDesignerPalettes[Math.floor(Math.random() * lightDesignerPalettes.length)];
-
-  const minimalistSvg = `<svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="1080" height="1080" viewBox="0 0 1080 1080">
-  <rect width="1080" height="1080" fill="${p.bg}"/>
-  
-  <rect x="60" y="60" width="960" height="960" rx="24" fill="none" stroke="${p.accent}" stroke-width="2" stroke-opacity="0.3"/>
-
-  <text x="100" y="150" fill="${p.accent}" font-family="system-ui, sans-serif" font-weight="800" font-size="22" letter-spacing="4">${enableFestivals ? '✨ FESTIVE SEASON SPECIAL' : '⚡ FEATURED SPOTLIGHT'}</text>
-
-  <text x="100" y="280" fill="${p.text}" font-family="system-ui, sans-serif" font-weight="900" font-size="64" letter-spacing="-1">${headline}</text>
-
-  <line x1="100" y1="360" x2="300" y2="360" stroke="${p.accent}" stroke-width="4"/>
-
-  <text x="100" y="420" fill="${p.muted}" font-family="system-ui, sans-serif" font-weight="600" font-size="28">${bCat} &amp; Expert Craftsmanship</text>
-
-  <rect x="100" y="520" width="880" height="220" rx="16" fill="${p.cardBg}" stroke="${p.border}" stroke-width="1.5"/>
-  <text x="140" y="590" fill="${p.text}" font-family="system-ui, sans-serif" font-weight="700" font-size="28">✓ Walk-Ins &amp; Direct Workshop Drop-Off</text>
-  <text x="140" y="650" fill="${p.muted}" font-family="system-ui, sans-serif" font-weight="500" font-size="22">No Online Bookings Needed • Talk Directly to Master Craftsmen</text>
-
-  <text x="100" y="900" fill="${p.text}" font-family="system-ui, sans-serif" font-weight="900" font-size="44" letter-spacing="1">${bName}</text>
-  <text x="100" y="945" fill="${p.accent}" font-family="system-ui, sans-serif" font-weight="700" font-size="20" letter-spacing="2">VERIFIED GOOGLE BUSINESS PROFILE</text>
-</svg>`;
-
-  return `data:image/svg+xml;base64,${Buffer.from(minimalistSvg, 'utf-8').toString('base64')}`;
+  throw new Error('AI Banner generation failed. No valid vector SVG returned from Gemini AI.');
 }
+
 
 // 1. Get Auto-Post Configuration for a Business
 app.get('/api/auto-posts/config/:businessId', async (req, res) => {
