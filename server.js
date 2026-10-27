@@ -20,11 +20,11 @@ app.set('trust proxy', 1);
 // Dynamic CORS configuration supporting environment variable or sensible defaults
 const allowedOrigins = [
   process.env.FRONTEND_URL,
-  '[https://sjbusinesssolutions2-hash.github.io](https://sjbusinesssolutions2-hash.github.io)',
+  'https://sjbusinesssolutions2-hash.github.io',
   'http://localhost:3000',
-  '[http://127.0.0.1:3000](http://127.0.0.1:3000)',
+  'http://127.0.0.1:3000',
   'http://localhost:5500',
-  '[http://127.0.0.1:5500](http://127.0.0.1:5500)'
+  'http://127.0.0.1:5500'
 ].filter(Boolean);
 
 app.use(express.json());
@@ -98,7 +98,7 @@ function extractPersonalName(profile) {
   return profile.displayName || 'User Account';
 }
 
-const backendHostUrl = process.env.BACKEND_URL || '[https://review-ai-backend-03sb.onrender.com](https://review-ai-backend-03sb.onrender.com)';
+const backendHostUrl = process.env.BACKEND_URL || 'https://review-ai-backend-03sb.onrender.com';
 
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
@@ -212,6 +212,7 @@ Instructions:
   return null;
 }
 
+// Seasonal Festival Info Helper
 function getSeasonalFestivalInfo(dateObj) {
   const month = dateObj.getMonth();
   if (month === 9 || month === 10) return "Diwali, Dhanteras, and peak festive season. Focus on festive celebrations, gear readiness, and community spirit.";
@@ -221,6 +222,7 @@ function getSeasonalFestivalInfo(dateObj) {
   return "Local seasonal highlights and community celebrations.";
 }
 
+// Dedicated Generator for Auto-Posts & Test Bench (Date & Festival Aware)
 async function generateAutoPostText(locationName, category, topics, enableFestivals, enableReviewSpotlights) {
   if (!geminiKeys || geminiKeys.length === 0) {
     return `At ${locationName || 'our business'}, we take immense pride in delivering top-tier ${category || 'services'}. #${(locationName || 'Business').replace(/\s+/g, '')}`;
@@ -232,21 +234,21 @@ async function generateAutoPostText(locationName, category, topics, enableFestiv
   
   let festivalContext = "Disabled";
   if (enableFestivals) {
-    festivalContext = `ENABLED. Current Active Festival Context for Today (${currentDate}): ${seasonalHint}. You MUST explicitly incorporate a warm, authentic greeting for this specific festival/season naturally into the post.`;
+    festivalContext = `ENABLED for today (${currentDate}). Active Festival Context: ${seasonalHint}. Weave a warm, festive greeting naturally into the post if applicable.`;
   }
 
-  const prompt = `You are a high-end social media strategist writing a natural, human-like Google Business Profile post for "${locationName || 'Our Business'}" (Category: ${category || 'Local Business'}).
+  const prompt = `You are an expert social media manager for a local business named "${locationName || 'Our Business'}" (Category: ${category || 'Local Business'}).
+Generate an engaging Google Business Profile post based on these settings:
+- Today's Date: ${currentDate}
+- Topics/Focus: ${topics || 'General business highlights and customer service'}
+- Festival/Holiday Greetings: ${festivalContext}
+- Review Spotlight: ${enableReviewSpotlights ? 'Enabled (highlight customer satisfaction)' : 'Disabled'}
 
-Today's Date: ${currentDate}
-Topic/Focus: ${topics || 'General business highlights, expert craftsmanship, and community service'}
-Festival Instructions: ${festivalContext}
-Review Spotlight: ${enableReviewSpotlights ? 'ENABLED (weave customer praise naturally)' : 'Disabled'}
-
-STRICT FACTUAL & HUMAN WRITING RULES:
-1. Write like a real business owner writing directly to their local community. Sounds natural, warm, and authentic (NOT AI-sounding, NO fluff, NO cliché jargon).
-2. Physical Workshop Reality: This is a local brick-and-mortar workshop. Strictly NO "online booking", NO e-commerce, NO delivery promises.
-3. Call to Action: Must ONLY invite walk-ins or phone calls (e.g., "Drop by our workshop in Vadodara today" or "Bring your gear in for a quick check").
-4. Length: 2 to 4 sentences max, ending with 2 relevant hashtags.`;
+Requirements:
+1. 2 to 4 sentences long.
+2. Professional, engaging, and inviting tone.
+3. Include 1 clear call-to-action (walk-ins or phone calls only, NO online booking) and 2 relevant hashtags.
+4. Avoid repetitive formulas or rigid templates.`;
 
   const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.6-flash'];
 
@@ -280,32 +282,31 @@ STRICT FACTUAL & HUMAN WRITING RULES:
     }
   }
 
-  return `Wishing everyone a wonderful festive season from ${locationName || 'our workshop'}! #LocalEnterprise #FestiveVibes`;
+  return `Visit us today for great service and special offers! #LocalBusiness #CustomerFirst`;
 }
 
+// Dedicated AI SVG Banner Generator (Light Theme, Editorial, Festival Aware)
 async function generateAiPosterSvg(locationName, category, topics, enableFestivals) {
   const bName = locationName || 'Our Business';
   const bCat = category || 'Local Business';
   let headline = topics && topics.trim().length > 3 ? topics.trim() : `Expert ${bCat}`;
-  if (headline.length > 50) headline = headline.substring(0, 47) + '...';
+  if (headline.length > 45) headline = headline.substring(0, 42) + '...';
 
   const now = new Date();
   const currentDate = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   const seasonalHint = getSeasonalFestivalInfo(now);
   
   const festivalInstruction = enableFestivals 
-    ? `FESTIVAL THEME ACTIVE: The banner must prominently reflect the current seasonal/festival celebration (${seasonalHint}). Use warm celebratory design accents (e.g., festive gold/saffron top badge, warm auspicious tones, and a celebratory headline tag).` 
+    ? `FESTIVAL THEME ACTIVE: Reflect seasonal celebration (${seasonalHint}) with warm celebratory accents.` 
     : `Standard professional spotlight banner.`;
 
-  const prompt = `You are a world-class graphic designer creating a dynamic, high-end 1080x1080 square vector banner SVG for "${bName}" (${bCat}).
+  const prompt = `Generate a clean, professional, minimalistic light-themed 1080x1080 square social media banner SVG for "${bName}" (${bCat}).
 Headline: "${headline}".
 ${festivalInstruction}
-
-BOUTIQUE GRAPHIC DESIGNER RULES (MUST NOT LOOK AI-GENERATED):
-1. Return ONLY valid SVG code (<svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="1080" height="1080" viewBox="0 0 1080 1080">...</svg>) without markdown formatting or backticks.
-2. Color Theme: Use fresh, light, human-designed editorial palettes (e.g. warm editorial cream #faf8f5, vibrant sage green, rich terracotta, warm festive saffron #d97706, crisp white background). DO NOT use dark mode. NO radial glowing lights, NO blurry neon effects.
-3. Typography & Artwork: Minimalist clean vector illustration, generous spacing, crisp hierarchy.
-4. Call-to-Action: Truthful local workshop messaging like "Walk-Ins Welcome • Visit Workshop" (NEVER mention online booking or fake buttons).`;
+Design Guidelines (Handmade graphic designer feel, NOT AI-generated):
+1. Return ONLY valid SVG code (<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">...</svg>) without markdown formatting or backticks.
+2. Style: Flat, minimalistic vector design with clean light editorial palettes (e.g. warm cream background #faf8f5, bold dark typography, vibrant accent badges). NO dark mode, NO glowing lights, NO blurry neon effects.
+3. Content: Display business name prominently, clean subtitle, and truthful workshop call-to-action like "Walk-Ins Welcome - Visit Our Workshop" (NO online booking or e-commerce claims).`;
 
   if (geminiKeys && geminiKeys.length > 0) {
     const aiClient = new GoogleGenAI({ apiKey: geminiKeys[0] });
@@ -319,42 +320,39 @@ BOUTIQUE GRAPHIC DESIGNER RULES (MUST NOT LOOK AI-GENERATED):
     } catch (err) {}
   }
 
-  // Dynamic Human-Designed Light Palette Fallbacks (Zero Hardcoding, Vibrant & Fresh)
+  // Clean, Flat, Minimalist Light Designer Fallback SVG
   const lightDesignerPalettes = enableFestivals ? [
-    { bg: '#fffbeb', card: '#fef3c7', text: '#451a03', accent: '#d97706', muted: '#b45309', border: '#fde68a' }, // Festive Saffron & Gold
-    { bg: '#fdf8f6', card: '#faedcd', text: '#381d05', accent: '#bc6c25', muted: '#8d5524', border: '#e6ccb2' }  // Warm Festive Terracotta
+    { bg: '#fffbeb', cardBg: '#fef3c7', accent: '#d97706', text: '#451a03', muted: '#b45309', border: '#fde68a' },
+    { bg: '#fdf8f6', cardBg: '#faedcd', accent: '#bc6c25', text: '#381d05', muted: '#8d5524', border: '#e6ccb2' }
   ] : [
-    { bg: '#faf8f5', card: '#f2eae1', text: '#1c1917', accent: '#ea580c', muted: '#78716c', border: '#e7e5e4' }, // Warm Cream & Terracotta
-    { bg: '#f0fdf4', card: '#dcfce7', text: '#052e16', accent: '#16a34a', muted: '#166534', border: '#bbf7d0' }, // Fresh Mint & Sage Green
-    { bg: '#f8fafc', card: '#e2e8f0', text: '#0f172a', accent: '#0284c7', muted: '#475569', border: '#cbd5e1' }  // Crisp Slate & Royal Blue
+    { bg: '#faf8f5', cardBg: '#f2eae1', accent: '#ea580c', text: '#1c1917', muted: '#78716c', border: '#e7e5e4' },
+    { bg: '#f0fdf4', cardBg: '#dcfce7', accent: '#16a34a', text: '#052e16', muted: '#166534', border: '#bbf7d0' },
+    { bg: '#f8fafc', cardBg: '#e2e8f0', accent: '#0284c7', text: '#0f172a', muted: '#475569', border: '#cbd5e1' }
   ];
   const p = lightDesignerPalettes[Math.floor(Math.random() * lightDesignerPalettes.length)];
 
-  const dynamicLightSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">
+  const minimalistSvg = `<svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="1080" height="1080" viewBox="0 0 1080 1080">
   <rect width="1080" height="1080" fill="${p.bg}"/>
   
-  <circle cx="920" cy="160" r="280" fill="${p.card}" opacity="0.7"/>
-  <rect x="70" y="70" width="940" height="940" rx="28" fill="none" stroke="${p.accent}" stroke-width="2" stroke-opacity="0.3"/>
+  <rect x="60" y="60" width="960" height="960" rx="24" fill="none" stroke="${p.accent}" stroke-width="2" stroke-opacity="0.3"/>
 
-  <g transform="translate(120, 150)">
-    <rect x="0" y="0" width="310" height="48" rx="24" fill="${p.card}" stroke="${p.accent}" stroke-width="1.5"/>
-    <text x="155" y="31" fill="${p.accent}" font-family="system-ui, sans-serif" font-weight="800" font-size="18" letter-spacing="2" text-anchor="middle">${enableFestivals ? '✨ FESTIVE SEASON SPECIAL' : '⚡ FEATURED SPOTLIGHT'}</text>
-  </g>
+  <text x="100" y="150" fill="${p.accent}" font-family="system-ui, sans-serif" font-weight="800" font-size="22" letter-spacing="4">${enableFestivals ? '✨ FESTIVE SEASON SPECIAL' : '⚡ FEATURED SPOTLIGHT'}</text>
 
-  <text x="120" y="300" fill="${p.text}" font-family="system-ui, sans-serif" font-weight="900" font-size="64" letter-spacing="-1">${headline}</text>
-  <line x1="120" y1="380" x2="320" y2="380" stroke="${p.accent}" stroke-width="4"/>
+  <text x="100" y="280" fill="${p.text}" font-family="system-ui, sans-serif" font-weight="900" font-size="64" letter-spacing="-1">${headline}</text>
 
-  <text x="120" y="440" fill="${p.muted}" font-family="system-ui, sans-serif" font-weight="600" font-size="28">${bCat} • Master Craftsmanship</text>
+  <line x1="100" y1="360" x2="300" y2="360" stroke="${p.accent}" stroke-width="4"/>
 
-  <rect x="120" y="540" width="840" height="210" rx="20" fill="${p.card}" stroke="${p.border}" stroke-width="2"/>
-  <text x="160" y="620" fill="${p.text}" font-family="system-ui, sans-serif" font-weight="700" font-size="28">✓ Walk-Ins Welcome • Direct Workshop Service</text>
-  <text x="160" y="675" fill="${p.muted}" font-family="system-ui, sans-serif" font-weight="500" font-size="22">No Online Booking Needed • Speak Directly with Experts</text>
+  <text x="100" y="420" fill="${p.muted}" font-family="system-ui, sans-serif" font-weight="600" font-size="28">${bCat} &amp; Expert Craftsmanship</text>
 
-  <text x="120" y="900" fill="${p.text}" font-family="system-ui, sans-serif" font-weight="900" font-size="44" letter-spacing="0.5">${bName}</text>
-  <text x="120" y="945" fill="${p.accent}" font-family="system-ui, sans-serif" font-weight="700" font-size="20" letter-spacing="2">VERIFIED GOOGLE BUSINESS PROFILE</text>
+  <rect x="100" y="520" width="880" height="220" rx="16" fill="${p.cardBg}" stroke="${p.border}" stroke-width="1.5"/>
+  <text x="140" y="590" fill="${p.text}" font-family="system-ui, sans-serif" font-weight="700" font-size="28">✓ Walk-Ins &amp; Direct Workshop Drop-Off</text>
+  <text x="140" y="650" fill="${p.muted}" font-family="system-ui, sans-serif" font-weight="500" font-size="22">No Online Bookings Needed • Talk Directly to Master Craftsmen</text>
+
+  <text x="100" y="900" fill="${p.text}" font-family="system-ui, sans-serif" font-weight="900" font-size="44" letter-spacing="1">${bName}</text>
+  <text x="100" y="945" fill="${p.accent}" font-family="system-ui, sans-serif" font-weight="700" font-size="20" letter-spacing="2">VERIFIED GOOGLE BUSINESS PROFILE</text>
 </svg>`;
 
-  return `data:image/svg+xml;base64,${Buffer.from(dynamicLightSvg, 'utf-8').toString('base64')}`;
+  return `data:image/svg+xml;base64,${Buffer.from(minimalistSvg, 'utf-8').toString('base64')}`;
 }
 
 // 1. Get Auto-Post Configuration for a Business
@@ -461,7 +459,7 @@ async function fetchLocationReviews(accessToken, accountName, locationName) {
       parentPath = `${accountName}/${locationName}`;
     }
 
-    const res = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
+    const res = await fetch(`[https://mybusiness.googleapis.com/v4/$](https://mybusiness.googleapis.com/v4/$){parentPath}/reviews`, {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
@@ -518,7 +516,7 @@ cron.schedule('*/15 * * * *', async () => {
           const replyText = await generate2LineAIReply(loc.locationName, reviewerName, starVal, review.comment || '');
 
           if (replyText) {
-            const googleRes = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews/${review.reviewId}/reply`, {
+            const googleRes = await fetch(`[https://mybusiness.googleapis.com/v4/$](https://mybusiness.googleapis.com/v4/$){parentPath}/reviews/${review.reviewId}/reply`, {
               method: 'PUT',
               headers: {
                 'Authorization': `Bearer ${user.accessToken}`,
@@ -543,13 +541,13 @@ app.get('/auth/google', passport.authenticate('google', {
   scope: [
     'profile',
     'email',
-    'https://www.googleapis.com/auth/business.manage'
+    '[https://www.googleapis.com/auth/business.manage](https://www.googleapis.com/auth/business.manage)'
   ],
   accessType: 'offline',
   prompt: 'consent'
 }));
 
-const frontendBaseUrl = process.env.FRONTEND_URL || 'https://sjbusinesssolutions2-hash.github.io/review-ai-app';
+const frontendBaseUrl = process.env.FRONTEND_URL || '[https://sjbusinesssolutions2-hash.github.io/review-ai-app](https://sjbusinesssolutions2-hash.github.io/review-ai-app)';
 
 app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: `${frontendBaseUrl}/login.html` }),
@@ -706,7 +704,7 @@ app.get('/api/reviews/all', async (req, res) => {
     let rawReviews = [];
 
     try {
-      const response = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
+      const response = await fetch(`[https://mybusiness.googleapis.com/v4/$](https://mybusiness.googleapis.com/v4/$){parentPath}/reviews`, {
         headers: {
           'Authorization': `Bearer ${user.accessToken}`,
           'Content-Type': 'application/json'
@@ -820,7 +818,7 @@ app.post('/api/reviews/dismiss', async (req, res) => {
 app.post('/api/reviews/reply', async (req, res) => {
   const { userId, businessId, reviewId, replyText } = req.body;
 
-  if (!userId || !businessId || !reviewId || !replyText || replyText.trim() === '') {
+  if (!userId || !businessId ||Id || !reviewId || !replyText || replyText.trim() === '') {
     return res.status(400).json({ error: 'Missing required parameters or empty reply text' });
   }
 
@@ -833,7 +831,7 @@ app.post('/api/reviews/reply', async (req, res) => {
     const targetLocation = (user.locations || []).find(l => l.locationId === businessId);
     const parentPath = targetLocation && targetLocation.accountLocationPath ? targetLocation.accountLocationPath : businessId;
 
-    const googleRes = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews/${reviewId}/reply`, {
+    const googleRes = await fetch(`[https://mybusiness.googleapis.com/v4/$](https://mybusiness.googleapis.com/v4/$){parentPath}/reviews/${reviewId}/reply`, {
       method: 'PUT',
       headers: {
         'Authorization': `Bearer ${user.accessToken}`,
