@@ -862,7 +862,7 @@ app.post('/api/reviews/dismiss', async (req, res) => {
 app.post('/api/reviews/reply', async (req, res) => {
   const { userId, businessId, reviewId, replyText } = req.body;
 
-  if (!userId || !businessId ||Id || !reviewId || !replyText || replyText.trim() === '') {
+    if (!userId || !businessId || !reviewId || !replyText || replyText.trim() === '') {
     return res.status(400).json({ error: 'Missing required parameters or empty reply text' });
   }
 
