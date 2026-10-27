@@ -552,16 +552,28 @@ async function fetchLocationReviews(accessToken, accountName, locationName) {
 cron.schedule('*/15 * * * *', async () => {
   console.log('[Auto-Reply Worker] Running periodic check for unanswered reviews across Pro locations...');
   try {
-    const users = await User.find({ 'locations.subscriptionStatus': 'pro', 'locations.autoReplyEnabled': true });
+    // 1. Query only users who have at least one Pro location with auto-reply turned on
+    const users = await User.find({ 
+      'locations.subscriptionStatus': 'pro', 
+      'locations.autoReplyEnabled': true 
+    });
 
     for (const user of users) {
       if (!user.accessToken) continue;
 
       for (const loc of user.locations) {
+        // 2. Strict double-check to skip any non-pro or disabled locations
         if (loc.subscriptionStatus !== 'pro' || !loc.autoReplyEnabled) continue;
 
-        const parentPath = loc.accountLocationPath || loc.locationId;
-        const reviewData = await fetchLocationReviews(user.accessToken, parentPath.split('/')[0] + '/' + parentPath.split('/')[1], parentPath);
+        const parentPath = loc.accountLocationPath; // Formatted as: accounts/{accId}/locations/{locId}
+        if (!parentPath) continue;
+
+        // Split account name ("accounts/123") and location name ("locations/456") correctly
+        const pathParts = parentPath.split('/');
+        const accountName = `${pathParts[0]}/${pathParts[1]}`;
+        const locationName = `${pathParts[2]}/${pathParts[3]}`;
+
+        const reviewData = await fetchLocationReviews(user.accessToken, accountName, locationName);
         const unreplied = (reviewData.reviews || []).filter(r => !r.reviewReply);
 
         for (const review of unreplied) {
@@ -591,6 +603,7 @@ cron.schedule('*/15 * * * *', async () => {
     console.error('[Auto-Reply Worker] Error executing background worker:', err.message);
   }
 });
+
 
 app.get('/auth/google', passport.authenticate('google', {
   scope: [
