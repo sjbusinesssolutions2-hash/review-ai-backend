@@ -398,9 +398,16 @@ async function publishPostToGoogle(accessToken, accountLocationPath, summary, im
 // 1. Get Auto-Post Configuration for a Business
 app.get('/api/auto-posts/config/:businessId', async (req, res) => {
   try {
+    const { userId } = req.query;
     let config = await AutoPostConfig.findOne({ businessId: req.params.businessId });
     if (!config) {
-      config = await AutoPostConfig.create({ businessId: req.params.businessId });
+      config = await AutoPostConfig.create({ 
+        businessId: req.params.businessId,
+        userId: userId || null 
+      });
+    } else if (userId && !config.userId) {
+      config.userId = userId;
+      await config.save();
     }
     res.json({ success: true, config });
   } catch (err) {
@@ -411,11 +418,14 @@ app.get('/api/auto-posts/config/:businessId', async (req, res) => {
 // 2. Update Auto-Post Preferences
 app.post('/api/auto-posts/config/:businessId', async (req, res) => {
   try {
-    const { enabled, frequency, preferredTime, topics, enableFestivals, enableReviewSpotlights } = req.body;
+    const { userId, enabled, frequency, preferredTime, topics, enableFestivals, enableReviewSpotlights } = req.body;
+
+    const updateData = { enabled, frequency, preferredTime, topics, enableFestivals, enableReviewSpotlights };
+    if (userId) updateData.userId = userId;
 
     const config = await AutoPostConfig.findOneAndUpdate(
       { businessId: req.params.businessId },
-      { enabled, frequency, preferredTime, topics, enableFestivals, enableReviewSpotlights },
+      updateData,
       { new: true, upsert: true }
     );
 
@@ -424,6 +434,7 @@ app.post('/api/auto-posts/config/:businessId', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 // 3. Get Scheduled & Post History
 app.get('/api/auto-posts/history/:businessId', async (req, res) => {
