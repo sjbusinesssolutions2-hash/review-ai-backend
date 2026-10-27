@@ -351,7 +351,7 @@ DESIGN & COLOR DIRECTIVE:
   throw new Error('AI Banner generation failed.');
 }
 
-async function publishPostToGoogle(accessToken, accountLocationPath, summary, imageBase64) {
+async function publishPostToGoogle(accessToken, accountLocationPath, summary, publicImageUrl) {
   try {
     // Construct Google Business Profile API v4 localPosts endpoint
     const endpoint = `https://mybusiness.googleapis.com/v4/${accountLocationPath}/localPosts`;
@@ -361,15 +361,16 @@ async function publishPostToGoogle(accessToken, accountLocationPath, summary, im
       summary: summary,
       topicType: 'STANDARD',
       callToAction: {
-        actionType: 'CALL' // Simple workshop call action using verified GBP phone
+        actionType: 'LEARN_MORE',
+        url: 'https://sjbs.ai' // Replace with your target website or location URL
       }
     };
 
-    // If an AI-generated base64 image exists, pass it via media array
-    if (imageBase64 && imageBase64.startsWith('data:image')) {
+    // If a public PNG image URL exists, pass it via media array
+    if (publicImageUrl) {
       postPayload.media = [{
         mediaFormat: 'PHOTO',
-        sourceUrl: imageBase64 // Google GBP accepts hosted SVG/Image URLs or data URIs
+        sourceUrl: publicImageUrl // Must be a public HTTP/HTTPS URL ending in .png or .jpg
       }];
     }
 
@@ -393,6 +394,40 @@ async function publishPostToGoogle(accessToken, accountLocationPath, summary, im
     return { success: false, error: err.message };
   }
 }
+
+const sharp = require('sharp');
+
+// Dynamic SVG-to-PNG Rasterizer Endpoint for Google Posts
+app.get('/api/auto-posts/banner/:postId.png', async (req, res) => {
+  try {
+    // Find the config document that contains this history subdocument ID
+    const config = await AutoPostConfig.findOne({ 'history._id': req.params.postId });
+    if (!config) {
+      return res.status(404).send('Banner graphic not found');
+    }
+
+    // Extract the specific history item using Mongoose's .id() helper
+    const historyItem = config.history.id(req.params.postId);
+    if (!historyItem || !historyItem.svgContent) {
+      return res.status(404).send('Banner content missing');
+    }
+
+    const pngBuffer = await sharp(Buffer.from(historyItem.svgContent))
+      .resize(1200, 900, {
+        fit: 'contain',
+        background: { r: 255, g: 255, b: 255, alpha: 1 }
+      })
+      .png()
+      .toBuffer();
+
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.send(pngBuffer);
+  } catch (err) {
+    console.error('Error rendering PNG banner:', err);
+    res.status(500).send('Error generating banner image');
+  }
+});
 
 
 // 1. Get Auto-Post Configuration for a Business
@@ -1043,7 +1078,7 @@ cron.schedule('*/15 * * * *', async () => {
       const targetLocation = (user.locations || []).find(l => l.locationId === config.businessId);
       if (!targetLocation || !targetLocation.accountLocationPath) continue;
 
-      // Calculate if it is time to publish based on frequency & lastPostedAt
+      // Calculate frequency timing
       const now = new Date();
       let shouldPublish = false;
 
@@ -1062,7 +1097,7 @@ cron.schedule('*/15 * * * *', async () => {
         const bName = targetLocation.locationName || 'Our Business';
         const bCat = 'Local Business';
 
-        // 1. Generate text copy
+        // A. Generate text copy
         const postText = await generateAutoPostText(
           bName,
           bCat,
@@ -1071,35 +1106,50 @@ cron.schedule('*/15 * * * *', async () => {
           config.enableReviewSpotlights
         );
 
-        // 2. Generate pure AI SVG graphic banner
-        const imageUrl = await generateAiPosterSvg(
+        // B. Generate pure AI SVG graphic banner
+        const svgContent = await generateAiPosterSvg(
           bName,
           bCat,
           config.topics,
           config.enableFestivals
         );
 
-        // 3. Publish to Google Business Profile
+        // C. Push history entry first to generate a subdocument _id for the image URL
+        const newHistoryEntry = {
+          postText: postText,
+          svgContent: svgContent, // Store SVG securely in DB to render on the fly
+          publishedAt: now,
+          status: 'PENDING'
+        };
+        
+        config.history.push(newHistoryEntry);
+        await config.save();
+
+        // Get the newly created history item's ID
+        const savedHistoryItem = config.history[config.history.length - 1];
+
+        // D. Construct public PNG URL pointing to our dynamic Sharp rasterizer route
+        const baseUrl = process.env.RENDER_EXTERNAL_URL || 'https://review-ai-backend-03sb.onrender.com';
+        const publicPngUrl = `${baseUrl}/api/auto-posts/banner/${savedHistoryItem._id}.png`;
+
+        // E. Publish to Google Business Profile API with valid PNG URL
         const publishResult = await publishPostToGoogle(
           user.accessToken,
           targetLocation.accountLocationPath,
           postText,
-          imageUrl
+          publicPngUrl
         );
 
-        // 4. Update History and Timestamp
+        // F. Update History status and Timestamp
+        savedHistoryItem.status = publishResult.success ? 'LIVE' : 'FAILED';
+        savedHistoryItem.imageUrl = publicPngUrl;
+        savedHistoryItem.googlePostId = publishResult.googlePostId || null;
+        savedHistoryItem.errorDetails = publishResult.error || null;
+        
         config.lastPostedAt = now;
-        config.history.push({
-          postText: postText,
-          imageUrl: imageUrl,
-          publishedAt: now,
-          status: publishResult.success ? 'LIVE' : 'FAILED',
-          googlePostId: publishResult.googlePostId || null,
-          errorDetails: publishResult.error || null
-        });
-
         await config.save();
-        console.log(`[Auto-Post Worker] Completed post for ${targetLocation.locationName}. Status: ${publishResult.success ? 'LIVE' : 'FAILED'}`);
+
+        console.log(`[Auto-Post Worker] Completed post for ${targetLocation.locationName}. Status: ${savedHistoryItem.status}`);
       }
     }
   } catch (err) {
