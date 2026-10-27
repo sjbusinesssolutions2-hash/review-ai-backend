@@ -342,7 +342,7 @@ DESIGN & COLOR DIRECTIVE:
         svg = svg.replace(/class="([^"]*)"\s+class="[^"]*"/g, 'class="$1"');
 
         if (svg.startsWith('<svg') && svg.endsWith('</svg>')) {
-          return `data:image/svg+xml;base64,${Buffer.from(svg, 'utf-8').toString('base64')}`;
+          return svg; // Return pure raw SVG string for database storage & sharp conversion
         }
       } catch (err) {}
     }
