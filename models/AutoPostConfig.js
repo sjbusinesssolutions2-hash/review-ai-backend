@@ -12,9 +12,10 @@ const autoPostConfigSchema = new mongoose.Schema({
   lastPostedAt: { type: Date, default: null },
   history: [{
     postText: String,
+    svgContent: String, // Added: Stores raw SVG for sharp PNG generation on the fly
     imageUrl: String,
     publishedAt: { type: Date, default: Date.now },
-    status: { type: String, enum: ['LIVE', 'FAILED'], default: 'LIVE' },
+    status: { type: String, enum: ['PENDING', 'LIVE', 'FAILED'], default: 'PENDING' }, // Added: PENDING status support
     googlePostId: String,
     errorDetails: String
   }]
