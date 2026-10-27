@@ -297,22 +297,19 @@ async function generateAiPosterSvg(locationName, category, topics, enableFestiva
   const seasonalHint = getSeasonalFestivalInfo(now);
   
   const festivalInstruction = enableFestivals 
-    ? `FESTIVAL THEME ACTIVE: The banner must dynamically reflect the current festive season (${seasonalHint}) with elegant, warm celebratory accents matching the date.` 
-    : `Standard professional editorial spotlight banner.`;
+    ? `FESTIVAL THEME ACTIVE: Feature the upcoming season/festival (${seasonalHint}) with celebratory design elements.` 
+    : `Standard professional spotlight banner.`;
 
-  const prompt = `You are an elite, world-class graphic designer creating a high-end, minimalistic 1080x1080 square vector banner SVG for "${bName}" (${bCat}).
+  const prompt = `You are an elite, independent graphic designer creating a unique, high-end 1080x1080 square vector banner SVG for "${bName}" (${bCat}).
 Headline: "${headline}".
 ${festivalInstruction}
 
-DESIGN & AESTHETIC DIRECTIVES (Inspired by high-end editorial layouts, warm matte vintage/cream/mustard tones, generous whitespace, and sophisticated typography):
-1. Return ONLY valid, clean SVG code (<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">...</svg>) without markdown formatting, without backticks, without any explanation.
-2. Style: Minimalist, bright (NO dark mode, NO disco neon effects, NO glowing radial gradients). Use sophisticated matte background tones, generous whitespace, crisp structural hierarchy, and bold editorial typography.
-3. Content Rules: 
-   - Showcase the business name ("${bName}") and category ("${bCat}").
-   - Integrate the headline/topic organically.
-   - NEVER include customer ratings, review stars, or ratings counts.
-   - Include a truthful workshop call-to-action like "Walk-Ins Welcome • Direct Workshop Service" (NEVER mention online booking or e-commerce).
-4. Technical: Ensure flawless XML syntax, proper closing tags, and valid URI attributes.`;
+STRICT DESIGN RULES (CRITICAL):
+1. Return ONLY valid SVG code (<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">...</svg>) without markdown formatting or backticks.
+2. VARY THE LAYOUT & COLOR: Do not use the same layout twice. Randomly choose a fresh, bright, professional color palette (e.g., crisp mint, warm terracotta, vibrant saffron, rich slate, or editorial cream) with high contrast. NO dark mode, NO neon lights.
+3. Typography & Composition: Use bold, clean vector shapes, asymmetric or modern editorial typography hierarchy, and generous whitespace. 
+4. Content Restrictions: NEVER include customer reviews, stars, or ratings. Include truthful workshop messaging ("Walk-Ins Welcome • Direct Service", NO online booking).
+5. XML Safety: Ensure NO duplicate attributes (like multiple class definitions) and all tags are properly closed.`;
 
   if (geminiKeys && geminiKeys.length > 0) {
     for (let k = 0; k < geminiKeys.length; k++) {
@@ -321,18 +318,19 @@ DESIGN & AESTHETIC DIRECTIVES (Inspired by high-end editorial layouts, warm matt
         const response = await aiClient.models.generateContent({ model: 'gemini-3.5-flash', contents: prompt });
         let svg = response.text || '';
         svg = svg.replace(/```xml/g, '').replace(/```svg/g, '').replace(/```/g, '').trim();
+        
+        // Basic sanitizer to strip duplicate attribute errors if any slip through
+        svg = svg.replace(/class="([^"]*)"\s+class="[^"]*"/g, 'class="$1"');
+
         if (svg.startsWith('<svg') && svg.endsWith('</svg>')) {
           return `data:image/svg+xml;base64,${Buffer.from(svg, 'utf-8').toString('base64')}`;
         }
-      } catch (err) {
-        console.warn(`[Gemini SVG] Key ${k + 1} failed: ${err.message}`);
-      }
+      } catch (err) {}
     }
   }
 
-  throw new Error('AI Banner generation failed. No valid vector SVG returned from Gemini AI.');
+  throw new Error('AI Banner generation failed.');
 }
-
 
 // 1. Get Auto-Post Configuration for a Business
 app.get('/api/auto-posts/config/:businessId', async (req, res) => {
