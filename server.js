@@ -1065,11 +1065,12 @@ app.post('/api/admin/reset-free-limit', async (req, res) => {
   }
 });
 
-// Automated Background Worker for Auto-Posting (Runs every hour)
+// Bulletproof Auto-Post Worker: Retries on failure, enforces images, never blocks on errors
 cron.schedule('*/15 * * * *', async () => {
   console.log('[Auto-Post Worker] Checking active configurations...');
   try {
     const activeConfigs = await AutoPostConfig.find({ enabled: true });
+    const now = new Date();
 
     for (const config of activeConfigs) {
       const user = await User.findById(config.userId);
@@ -1079,9 +1080,7 @@ cron.schedule('*/15 * * * *', async () => {
       if (!targetLocation || !targetLocation.accountLocationPath) continue;
 
       // Calculate frequency timing
-      const now = new Date();
       let shouldPublish = false;
-
       if (!config.lastPostedAt) {
         shouldPublish = true;
       } else {
@@ -1092,64 +1091,80 @@ cron.schedule('*/15 * * * *', async () => {
       }
 
       if (shouldPublish) {
-        console.log(`[Auto-Post Worker] Triggering auto-post for ${targetLocation.locationName}...`);
+        console.log(`[Auto-Post Worker] Attempting scheduled post for ${targetLocation.locationName}...`);
 
         const bName = targetLocation.locationName || 'Our Business';
         const bCat = 'Local Business';
 
-        // A. Generate text copy
-        const postText = await generateAutoPostText(
-          bName,
-          bCat,
-          config.topics,
-          config.enableFestivals,
-          config.enableReviewSpotlights
-        );
+        try {
+          // 1. Generate text copy & SVG content
+          const postText = await generateAutoPostText(
+            bName,
+            bCat,
+            config.topics,
+            config.enableFestivals,
+            config.enableReviewSpotlights
+          );
 
-        // B. Generate pure AI SVG graphic banner
-        const svgContent = await generateAiPosterSvg(
-          bName,
-          bCat,
-          config.topics,
-          config.enableFestivals
-        );
+          const svgContent = await generateAiPosterSvg(
+            bName,
+            bCat,
+            config.topics,
+            config.enableFestivals
+          );
 
-        // C. Push history entry first to generate a subdocument _id for the image URL
-        const newHistoryEntry = {
-          postText: postText,
-          svgContent: svgContent, // Store SVG securely in DB to render on the fly
-          publishedAt: now,
-          status: 'PENDING'
-        };
-        
-        config.history.push(newHistoryEntry);
-        await config.save();
+          if (!svgContent) {
+            throw new Error('AI Banner generation returned empty SVG content.');
+          }
 
-        // Get the newly created history item's ID
-        const savedHistoryItem = config.history[config.history.length - 1];
+          // 2. Push history entry with SVG stored securely
+          const newHistoryEntry = {
+            postText: postText,
+            svgContent: svgContent,
+            publishedAt: now,
+            status: 'PENDING'
+          };
+          
+          config.history.push(newHistoryEntry);
+          await config.save();
+          const savedHistoryItem = config.history[config.history.length - 1];
 
-        // D. Construct public PNG URL pointing to our dynamic Sharp rasterizer route
-        const baseUrl = process.env.RENDER_EXTERNAL_URL || 'https://review-ai-backend-03sb.onrender.com';
-        const publicPngUrl = `${baseUrl}/api/auto-posts/banner/${savedHistoryItem._id}.png`;
+          // 3. Construct public PNG URL
+          const baseUrl = process.env.RENDER_EXTERNAL_URL || 'https://review-ai-backend-03sb.onrender.com';
+          const publicPngUrl = `${baseUrl}/api/auto-posts/banner/${savedHistoryItem._id}.png`;
 
-        // E. Publish to Google Business Profile API with valid PNG URL
-        const publishResult = await publishPostToGoogle(
-          user.accessToken,
-          targetLocation.accountLocationPath,
-          postText,
-          publicPngUrl
-        );
+          // 4. Publish to Google Business Profile API WITH the required image URL
+          const publishResult = await publishPostToGoogle(
+            user.accessToken,
+            targetLocation.accountLocationPath,
+            postText,
+            publicPngUrl // Mandatory image URL included
+          );
 
-        // F. Update History status and Timestamp
-        savedHistoryItem.status = publishResult.success ? 'LIVE' : 'FAILED';
-        savedHistoryItem.imageUrl = publicPngUrl;
-        savedHistoryItem.googlePostId = publishResult.googlePostId || null;
-        savedHistoryItem.errorDetails = publishResult.error || null;
-        
-        config.lastPostedAt = now;
-        await config.save();
+          if (publishResult.success) {
+            // SUCCESS: Update history item to LIVE and update lastPostedAt timestamp
+            savedHistoryItem.status = 'LIVE';
+            savedHistoryItem.imageUrl = publicPngUrl;
+            savedHistoryItem.googlePostId = publishResult.googlePostId || null;
+            
+            config.lastPostedAt = now; // Only update on true success!
+            await config.save();
 
-        console.log(`[Auto-Post Worker] Completed post for ${targetLocation.locationName}. Status: ${savedHistoryItem.status}`);
+            console.log(`[Auto-Post Worker] Successfully published image post for ${targetLocation.locationName}.`);
+          } else {
+            // FAILURE: Mark history item as FAILED, DO NOT update lastPostedAt so it retries next cycle
+            savedHistoryItem.status = 'FAILED';
+            savedHistoryItem.imageUrl = publicPngUrl;
+            savedHistoryItem.errorDetails = publishResult.error;
+            await config.save();
+
+            console.error(`[Auto-Post Worker] Failed to publish post for ${targetLocation.locationName}:`, publishResult.error);
+          }
+
+        } catch (innerErr) {
+          console.error(`[Auto-Post Worker] Critical generation error for ${targetLocation.locationName}:`, innerErr.message);
+          // Left lastPostedAt untouched so it automatically retries on the next 15-minute cron run
+        }
       }
     }
   } catch (err) {
