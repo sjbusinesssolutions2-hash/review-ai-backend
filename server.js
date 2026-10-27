@@ -415,16 +415,41 @@ app.get('/api/auto-posts/config/:businessId', async (req, res) => {
   }
 });
 
-// 2. Update Auto-Post Preferences
+// 2. Update Auto-Post Preferences (Protected by Pro Subscription Guard)
 app.post('/api/auto-posts/config/:businessId', async (req, res) => {
   try {
     const { userId, enabled, frequency, preferredTime, topics, enableFestivals, enableReviewSpotlights } = req.body;
+    const businessId = req.params.businessId;
 
-    const updateData = { enabled, frequency, preferredTime, topics, enableFestivals, enableReviewSpotlights };
-    if (userId) updateData.userId = userId;
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is required.' });
+    }
+
+    // 1. Verify User exists
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User record not found.' });
+    }
+
+    // 2. Security Check: Ensure the location has an active 'pro' subscription
+    const location = user.locations.find(l => 
+      l.locationId === businessId || 
+      l.accountLocationPath?.includes(businessId) || 
+      l.locationId?.includes(businessId)
+    );
+
+    if (!location || location.subscriptionStatus !== 'pro') {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Pro subscription required to save auto-post configurations.' 
+      });
+    }
+
+    // 3. Save Settings if verified as Pro
+    const updateData = { enabled, frequency, preferredTime, topics, enableFestivals, enableReviewSpotlights, userId };
 
     const config = await AutoPostConfig.findOneAndUpdate(
-      { businessId: req.params.businessId },
+      { businessId: businessId },
       updateData,
       { new: true, upsert: true }
     );
@@ -454,6 +479,30 @@ app.post('/api/auto-posts/test-generate', async (req, res) => {
   try {
     const { userId, businessId, locationName, category, topics, enableFestivals, enableReviewSpotlights } = req.body;
 
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is required.' });
+    }
+
+    // 1. Verify User exists
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User record not found.' });
+    }
+
+    // 2. Security Check: Ensure the location has an active 'pro' subscription
+    const location = user.locations.find(l => 
+      l.locationId === businessId || 
+      l.accountLocationPath?.includes(businessId) || 
+      l.locationId?.includes(businessId)
+    );
+
+    if (!location || location.subscriptionStatus !== 'pro') {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Pro subscription required to run AI previews and auto-posts.' 
+      });
+    }
+
     const bName = locationName || 'Our Business';
     const bCat = category || 'Local Business';
 
@@ -461,25 +510,22 @@ app.post('/api/auto-posts/test-generate', async (req, res) => {
     let reviewerName = '';
 
     if (enableReviewSpotlights && userId) {
-      const user = await User.findById(userId);
-      if (user && user.accessToken) {
-        const targetLocation = (user.locations || []).find(l => l.locationId === businessId) || user.locations[0];
-        if (targetLocation && targetLocation.accountLocationPath) {
-          const liveData = await fetchLocationReviews(
-            user.accessToken,
-            targetLocation.accountLocationPath.split('/')[0] + '/' + targetLocation.accountLocationPath.split('/')[1],
-            targetLocation.accountLocationPath
-          );
+      const targetLocation = (user.locations || []).find(l => l.locationId === businessId) || user.locations[0];
+      if (targetLocation && targetLocation.accountLocationPath) {
+        const liveData = await fetchLocationReviews(
+          user.accessToken,
+          targetLocation.accountLocationPath.split('/')[0] + '/' + targetLocation.accountLocationPath.split('/')[1],
+          targetLocation.accountLocationPath
+        );
 
-          const fiveStarReviews = (liveData.reviews || []).filter(r => 
-            (r.starRating === 'FIVE' || r.starRating === 5) && r.comment && r.comment.trim().length > 10
-          );
+        const fiveStarReviews = (liveData.reviews || []).filter(r => 
+          (r.starRating === 'FIVE' || r.starRating === 5) && r.comment && r.comment.trim().length > 10
+        );
 
-          if (fiveStarReviews.length > 0) {
-            const selected = fiveStarReviews[Math.floor(Math.random() * fiveStarReviews.length)];
-            realReviewSnippet = selected.comment.trim();
-            reviewerName = (selected.reviewer && selected.reviewer.displayName) ? selected.reviewer.displayName : 'Happy Customer';
-          }
+        if (fiveStarReviews.length > 0) {
+          const selected = fiveStarReviews[Math.floor(Math.random() * fiveStarReviews.length)];
+          realReviewSnippet = selected.comment.trim();
+          reviewerName = (selected.reviewer && selected.reviewer.displayName) ? selected.reviewer.displayName : 'Happy Customer';
         }
       }
     }
@@ -505,7 +551,6 @@ app.post('/api/auto-posts/test-generate', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
-
 
 async function fetchLocationReviews(accessToken, accountName, locationName) {
   try {
