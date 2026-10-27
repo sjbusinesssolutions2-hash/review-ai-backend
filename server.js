@@ -316,12 +316,12 @@ async function generateAiPosterSvg(locationName, category, topics, enableFestiva
 
   const selectedPalette = palettes[Math.floor(Math.random() * palettes.length)];
 
-  const prompt = `You are an elite graphic designer creating a unique, high-end 1080x1080 square vector banner SVG for "${bName}" (${bCat}).
+    const prompt = `You are an elite graphic designer creating a unique, high-end 1200x900 landscape vector banner SVG for "${bName}" (${bCat}).
 Headline: "${headline}".
 ${festivalInstruction}
 
 DESIGN & COLOR DIRECTIVE:
-1. Return ONLY valid SVG code (<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">...</svg>) without markdown formatting or backticks.
+1. Return ONLY valid SVG code (<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">...</svg>) without markdown formatting or backticks.
 2. COLOR SCHEME TO USE FOR THIS POST: Use the "${selectedPalette.name}" theme:
    - Background Fill: ${selectedPalette.bg}
    - Card/Container Fill: ${selectedPalette.card}
@@ -329,8 +329,10 @@ DESIGN & COLOR DIRECTIVE:
    - Accent / Highlight Color: ${selectedPalette.accent}
    - Border / Line Color: ${selectedPalette.border}
 3. Layout & Typography: Clean editorial layout, beautiful spacing, professional hierarchy, vector graphics relevant to ${bCat}.
-4. Restrictions: NO customer reviews or star ratings in the graphic. Truthful workshop messaging only ("Walk-Ins Welcome • Direct Service").
-5. XML Safety: All tags properly closed, zero duplicate attributes.`;
+4. Background Coverage: Ensure a root <rect width="1200" height="900" fill="${selectedPalette.bg}"/> covers the entire canvas edge-to-edge.
+5. Accuracy & Spelling: Double-check all rendered text for flawless English spelling and grammar (e.g., "Refurbishment", "Professional", "Services"). Do not invent misspelled words.
+6. Restrictions: NO customer reviews or star ratings in the graphic. Truthful workshop messaging only ("Walk-Ins Welcome • Direct Service").
+7. XML Safety: All tags properly closed, zero duplicate attributes.`;
 
   if (geminiKeys && geminiKeys.length > 0) {
     for (let k = 0; k < geminiKeys.length; k++) {
