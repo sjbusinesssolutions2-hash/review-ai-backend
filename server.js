@@ -1065,14 +1065,27 @@ app.post('/api/admin/reset-free-limit', async (req, res) => {
   }
 });
 
-// Bulletproof Auto-Post Worker: Retries on failure, enforces images, never blocks on errors
+// Bulletproof Auto-Post Worker with Total-Minute Window Matching
 cron.schedule('*/15 * * * *', async () => {
   console.log('[Auto-Post Worker] Checking active configurations...');
   try {
     const activeConfigs = await AutoPostConfig.find({ enabled: true });
+    
     const now = new Date();
+    const istTimeStr = now.toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour12: false });
+    const [currentHour, currentMinute] = istTimeStr.split(':').map(Number);
+    const currentTotalMinutes = currentHour * 60 + currentMinute;
 
     for (const config of activeConfigs) {
+      const [prefHour, prefMinute] = (config.preferredTime || '10:00').split(':').map(Number);
+      const prefTotalMinutes = prefHour * 60 + prefMinute;
+
+      // Check if current IST time is equal to or within 15 minutes after the scheduled time
+      const diff = currentTotalMinutes - prefTotalMinutes;
+      const isTimeMatch = diff >= 0 && diff < 15;
+      
+      if (!isTimeMatch) continue;
+
       const user = await User.findById(config.userId);
       if (!user || !user.accessToken) continue;
 
@@ -1097,7 +1110,6 @@ cron.schedule('*/15 * * * *', async () => {
         const bCat = 'Local Business';
 
         try {
-          // 1. Generate text copy & SVG content
           const postText = await generateAutoPostText(
             bName,
             bCat,
@@ -1117,7 +1129,6 @@ cron.schedule('*/15 * * * *', async () => {
             throw new Error('AI Banner generation returned empty SVG content.');
           }
 
-          // 2. Push history entry with SVG stored securely
           const newHistoryEntry = {
             postText: postText,
             svgContent: svgContent,
@@ -1129,30 +1140,26 @@ cron.schedule('*/15 * * * *', async () => {
           await config.save();
           const savedHistoryItem = config.history[config.history.length - 1];
 
-          // 3. Construct public PNG URL
           const baseUrl = process.env.RENDER_EXTERNAL_URL || 'https://review-ai-backend-03sb.onrender.com';
           const publicPngUrl = `${baseUrl}/api/auto-posts/banner/${savedHistoryItem._id}.png`;
 
-          // 4. Publish to Google Business Profile API WITH the required image URL
           const publishResult = await publishPostToGoogle(
             user.accessToken,
             targetLocation.accountLocationPath,
             postText,
-            publicPngUrl // Mandatory image URL included
+            publicPngUrl
           );
 
           if (publishResult.success) {
-            // SUCCESS: Update history item to LIVE and update lastPostedAt timestamp
             savedHistoryItem.status = 'LIVE';
             savedHistoryItem.imageUrl = publicPngUrl;
             savedHistoryItem.googlePostId = publishResult.googlePostId || null;
             
-            config.lastPostedAt = now; // Only update on true success!
+            config.lastPostedAt = now;
             await config.save();
 
             console.log(`[Auto-Post Worker] Successfully published image post for ${targetLocation.locationName}.`);
           } else {
-            // FAILURE: Mark history item as FAILED, DO NOT update lastPostedAt so it retries next cycle
             savedHistoryItem.status = 'FAILED';
             savedHistoryItem.imageUrl = publicPngUrl;
             savedHistoryItem.errorDetails = publishResult.error;
@@ -1163,7 +1170,6 @@ cron.schedule('*/15 * * * *', async () => {
 
         } catch (innerErr) {
           console.error(`[Auto-Post Worker] Critical generation error for ${targetLocation.locationName}:`, innerErr.message);
-          // Left lastPostedAt untouched so it automatically retries on the next 15-minute cron run
         }
       }
     }
