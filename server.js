@@ -541,7 +541,7 @@ app.get('/auth/google', passport.authenticate('google', {
   scope: [
     'profile',
     'email',
-    '[https://www.googleapis.com/auth/business.manage](https://www.googleapis.com/auth/business.manage)'
+    'https://www.googleapis.com/auth/business.manage'
   ],
   accessType: 'offline',
   prompt: 'consent'
