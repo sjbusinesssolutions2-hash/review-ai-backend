@@ -416,8 +416,7 @@ app.get('/api/auto-posts/banner/:postId.png', async (req, res) => {
 
     const pngBuffer = await sharp(Buffer.from(historyItem.svgContent))
       .resize(1200, 900, {
-        fit: 'contain',
-        background: { r: 255, g: 255, b: 255, alpha: 1 }
+        fit: 'fill' // Changed from 'contain' to 'fill' to eliminate white side bars
       })
       .png()
       .toBuffer();
