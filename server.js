@@ -654,8 +654,8 @@ app.get('/auth/google/callback',
                   rating: reviewData.rating,
                   reviewCount: reviewData.reviewCount,
                   address: addressStr,
-                  subscriptionStatus: user.locations.length === 0 ? 'pro' : 'free',
-                  autoReplyEnabled: true
+                  subscriptionStatus: 'free',
+                  autoReplyEnabled: false
                 });
               }
             }
