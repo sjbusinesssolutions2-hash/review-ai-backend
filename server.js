@@ -297,19 +297,40 @@ async function generateAiPosterSvg(locationName, category, topics, enableFestiva
   const seasonalHint = getSeasonalFestivalInfo(now);
   
   const festivalInstruction = enableFestivals 
-    ? `FESTIVAL THEME ACTIVE: Feature the upcoming season/festival (${seasonalHint}) with celebratory design elements.` 
+    ? `FESTIVAL THEME ACTIVE: Feature the upcoming season/festival (${seasonalHint}) with tasteful celebratory accents.` 
     : `Standard professional spotlight banner.`;
 
-  const prompt = `You are an elite, independent graphic designer creating a unique, high-end 1080x1080 square vector banner SVG for "${bName}" (${bCat}).
+  // 10+ Diverse, High-End Editorial Color Palettes
+  const palettes = [
+    { name: "Vintage Cream & Terracotta", bg: "#faf8f5", card: "#f2eae1", text: "#1c1917", accent: "#ea580c", border: "#e7e5e4" },
+    { name: "Festive Saffron & Gold", bg: "#fffbeb", card: "#fef3c7", text: "#451a03", accent: "#d97706", border: "#fde68a" },
+    { name: "Deep Forest & Mint", bg: "#f0fdf4", card: "#dcfce7", text: "#052e16", accent: "#16a34a", border: "#bbf7d0" },
+    { name: "Midnight Navy & Sky", bg: "#f8fafc", card: "#e2e8f0", text: "#0f172a", accent: "#0284c7", border: "#cbd5e1" },
+    { name: "Rich Burgundy & Rose", bg: "#fff1f2", card: "#ffe4e6", text: "#4c0519", accent: "#e11d48", border: "#fecdd3" },
+    { name: "Warm Terracotta & Clay", bg: "#fdf8f6", card: "#faedcd", text: "#381d05", accent: "#bc6c25", border: "#e6ccb2" },
+    { name: "Emerald Luxe", bg: "#ecfdf5", card: "#a7f3d0", text: "#022c22", accent: "#059669", border: "#6ee7b7" },
+    { name: "Royal Indigo", bg: "#eef2ff", card: "#e0e7ff", text: "#1e1b4b", accent: "#4f46e5", border: "#c7d2fe" },
+    { name: "Sunset Amber", bg: "#fff7ed", card: "#ffedd5", text: "#431407", accent: "#ea580c", border: "#fed7aa" },
+    { name: "Charcoal Minimalist", bg: "#f8fafc", card: "#e2e8f0", text: "#18181b", accent: "#52525b", border: "#d4d4d8" }
+  ];
+
+  const selectedPalette = palettes[Math.floor(Math.random() * palettes.length)];
+
+  const prompt = `You are an elite graphic designer creating a unique, high-end 1080x1080 square vector banner SVG for "${bName}" (${bCat}).
 Headline: "${headline}".
 ${festivalInstruction}
 
-STRICT DESIGN RULES (CRITICAL):
+DESIGN & COLOR DIRECTIVE:
 1. Return ONLY valid SVG code (<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">...</svg>) without markdown formatting or backticks.
-2. VARY THE LAYOUT & COLOR: Do not use the same layout twice. Randomly choose a fresh, bright, professional color palette (e.g., crisp mint, warm terracotta, vibrant saffron, rich slate, or editorial cream) with high contrast. NO dark mode, NO neon lights.
-3. Typography & Composition: Use bold, clean vector shapes, asymmetric or modern editorial typography hierarchy, and generous whitespace. 
-4. Content Restrictions: NEVER include customer reviews, stars, or ratings. Include truthful workshop messaging ("Walk-Ins Welcome • Direct Service", NO online booking).
-5. XML Safety: Ensure NO duplicate attributes (like multiple class definitions) and all tags are properly closed.`;
+2. COLOR SCHEME TO USE FOR THIS POST: Use the "${selectedPalette.name}" theme:
+   - Background Fill: ${selectedPalette.bg}
+   - Card/Container Fill: ${selectedPalette.card}
+   - Primary Text Color: ${selectedPalette.text}
+   - Accent / Highlight Color: ${selectedPalette.accent}
+   - Border / Line Color: ${selectedPalette.border}
+3. Layout & Typography: Clean editorial layout, beautiful spacing, professional hierarchy, vector graphics relevant to ${bCat}.
+4. Restrictions: NO customer reviews or star ratings in the graphic. Truthful workshop messaging only ("Walk-Ins Welcome • Direct Service").
+5. XML Safety: All tags properly closed, zero duplicate attributes.`;
 
   if (geminiKeys && geminiKeys.length > 0) {
     for (let k = 0; k < geminiKeys.length; k++) {
@@ -318,8 +339,6 @@ STRICT DESIGN RULES (CRITICAL):
         const response = await aiClient.models.generateContent({ model: 'gemini-3.5-flash', contents: prompt });
         let svg = response.text || '';
         svg = svg.replace(/```xml/g, '').replace(/```svg/g, '').replace(/```/g, '').trim();
-        
-        // Basic sanitizer to strip duplicate attribute errors if any slip through
         svg = svg.replace(/class="([^"]*)"\s+class="[^"]*"/g, 'class="$1"');
 
         if (svg.startsWith('<svg') && svg.endsWith('</svg>')) {
@@ -331,6 +350,7 @@ STRICT DESIGN RULES (CRITICAL):
 
   throw new Error('AI Banner generation failed.');
 }
+
 
 // 1. Get Auto-Post Configuration for a Business
 app.get('/api/auto-posts/config/:businessId', async (req, res) => {
