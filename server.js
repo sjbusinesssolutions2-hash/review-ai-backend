@@ -503,7 +503,7 @@ async function fetchLocationReviews(accessToken, accountName, locationName) {
       parentPath = `${accountName}/${locationName}`;
     }
 
-    const res = await fetch(`[https://mybusiness.googleapis.com/v4/$](https://mybusiness.googleapis.com/v4/$){parentPath}/reviews`, {
+    const res = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
@@ -560,7 +560,7 @@ cron.schedule('*/15 * * * *', async () => {
           const replyText = await generate2LineAIReply(loc.locationName, reviewerName, starVal, review.comment || '');
 
           if (replyText) {
-            const googleRes = await fetch(`[https://mybusiness.googleapis.com/v4/$](https://mybusiness.googleapis.com/v4/$){parentPath}/reviews/${review.reviewId}/reply`, {
+            const googleRes = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews/${review.reviewId}/reply`, {
               method: 'PUT',
               headers: {
                 'Authorization': `Bearer ${user.accessToken}`,
@@ -748,7 +748,7 @@ app.get('/api/reviews/all', async (req, res) => {
     let rawReviews = [];
 
     try {
-      const response = await fetch(`[https://mybusiness.googleapis.com/v4/$](https://mybusiness.googleapis.com/v4/$){parentPath}/reviews`, {
+      const response = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
         headers: {
           'Authorization': `Bearer ${user.accessToken}`,
           'Content-Type': 'application/json'
@@ -875,7 +875,7 @@ app.post('/api/reviews/reply', async (req, res) => {
     const targetLocation = (user.locations || []).find(l => l.locationId === businessId);
     const parentPath = targetLocation && targetLocation.accountLocationPath ? targetLocation.accountLocationPath : businessId;
 
-    const googleRes = await fetch(`[https://mybusiness.googleapis.com/v4/$](https://mybusiness.googleapis.com/v4/$){parentPath}/reviews/${reviewId}/reply`, {
+    const googleRes = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews/${reviewId}/reply`, {
       method: 'PUT',
       headers: {
         'Authorization': `Bearer ${user.accessToken}`,
