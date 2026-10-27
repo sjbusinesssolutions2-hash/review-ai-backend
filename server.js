@@ -351,6 +351,49 @@ DESIGN & COLOR DIRECTIVE:
   throw new Error('AI Banner generation failed.');
 }
 
+async function publishPostToGoogle(accessToken, accountLocationPath, summary, imageBase64) {
+  try {
+    // Construct Google Business Profile API v4 localPosts endpoint
+    const endpoint = `https://mybusiness.googleapis.com/v4/${accountLocationPath}/localPosts`;
+
+    const postPayload = {
+      languageCode: 'en-US',
+      summary: summary,
+      topicType: 'STANDARD',
+      callToAction: {
+        actionType: 'CALL' // Simple workshop call action using verified GBP phone
+      }
+    };
+
+    // If an AI-generated base64 image exists, pass it via media array
+    if (imageBase64 && imageBase64.startsWith('data:image')) {
+      postPayload.media = [{
+        mediaFormat: 'PHOTO',
+        sourceUrl: imageBase64 // Google GBP accepts hosted SVG/Image URLs or data URIs
+      }];
+    }
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(postPayload)
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      return { success: true, googlePostId: data.name || 'published' };
+    } else {
+      const errText = await res.text();
+      return { success: false, error: errText };
+    }
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
 
 // 1. Get Auto-Post Configuration for a Business
 app.get('/api/auto-posts/config/:businessId', async (req, res) => {
@@ -385,7 +428,11 @@ app.post('/api/auto-posts/config/:businessId', async (req, res) => {
 // 3. Get Scheduled & Post History
 app.get('/api/auto-posts/history/:businessId', async (req, res) => {
   try {
-    res.json({ success: true, posts: [] });
+    const config = await AutoPostConfig.findOne({ businessId: req.params.businessId });
+    if (!config) {
+      return res.json({ success: true, posts: [] });
+    }
+    res.json({ success: true, posts: config.history || [] });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -902,6 +949,83 @@ app.post('/api/admin/reset-free-limit', async (req, res) => {
     res.json({ success: true, message: 'Reset free usage counter' });
   } catch (err) {
     res.status(500).json({ error: 'Server error resetting limit' });
+  }
+});
+
+// Automated Background Worker for Auto-Posting (Runs every hour)
+cron.schedule('0 * * * *', async () => {
+  console.log('[Auto-Post Worker] Checking active configurations...');
+  try {
+    const activeConfigs = await AutoPostConfig.find({ enabled: true });
+
+    for (const config of activeConfigs) {
+      const user = await User.findById(config.userId);
+      if (!user || !user.accessToken) continue;
+
+      const targetLocation = (user.locations || []).find(l => l.locationId === config.businessId);
+      if (!targetLocation || !targetLocation.accountLocationPath) continue;
+
+      // Calculate if it is time to publish based on frequency & lastPostedAt
+      const now = new Date();
+      let shouldPublish = false;
+
+      if (!config.lastPostedAt) {
+        shouldPublish = true;
+      } else {
+        const diffInDays = (now - new Date(config.lastPostedAt)) / (1000 * 60 * 60 * 24);
+        if (config.frequency === 'daily' && diffInDays >= 1) shouldPublish = true;
+        if (config.frequency === 'weekly' && diffInDays >= 7) shouldPublish = true;
+        if (config.frequency === 'biweekly' && diffInDays >= 14) shouldPublish = true;
+      }
+
+      if (shouldPublish) {
+        console.log(`[Auto-Post Worker] Triggering auto-post for ${targetLocation.locationName}...`);
+
+        const bName = targetLocation.locationName || 'Our Business';
+        const bCat = 'Local Business';
+
+        // 1. Generate text copy
+        const postText = await generateAutoPostText(
+          bName,
+          bCat,
+          config.topics,
+          config.enableFestivals,
+          config.enableReviewSpotlights
+        );
+
+        // 2. Generate pure AI SVG graphic banner
+        const imageUrl = await generateAiPosterSvg(
+          bName,
+          bCat,
+          config.topics,
+          config.enableFestivals
+        );
+
+        // 3. Publish to Google Business Profile
+        const publishResult = await publishPostToGoogle(
+          user.accessToken,
+          targetLocation.accountLocationPath,
+          postText,
+          imageUrl
+        );
+
+        // 4. Update History and Timestamp
+        config.lastPostedAt = now;
+        config.history.push({
+          postText: postText,
+          imageUrl: imageUrl,
+          publishedAt: now,
+          status: publishResult.success ? 'LIVE' : 'FAILED',
+          googlePostId: publishResult.googlePostId || null,
+          errorDetails: publishResult.error || null
+        });
+
+        await config.save();
+        console.log(`[Auto-Post Worker] Completed post for ${targetLocation.locationName}. Status: ${publishResult.success ? 'LIVE' : 'FAILED'}`);
+      }
+    }
+  } catch (err) {
+    console.error('[Auto-Post Worker] Error during scheduled post run:', err.message);
   }
 });
 
