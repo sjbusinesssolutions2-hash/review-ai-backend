@@ -50,7 +50,7 @@ cron.schedule('*/15 * * * *', async () => {
           );
 
           if (replyText) {
-            const googleRes = await fetch(`[https://mybusiness.googleapis.com/v4/$](https://mybusiness.googleapis.com/v4/$){parentPath}/reviews/${review.reviewId}/reply`, {
+            const googleRes = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews/${review.reviewId}/reply`, {
               method: 'PUT',
               headers: {
                 'Authorization': `Bearer ${user.accessToken}`,
@@ -144,7 +144,7 @@ cron.schedule('*/15 * * * *', async () => {
           await config.save();
           const savedHistoryItem = config.history[config.history.length - 1];
 
-          const baseUrl = process.env.RENDER_EXTERNAL_URL || '[https://review-ai-backend-03sb.onrender.com](https://review-ai-backend-03sb.onrender.com)';
+          const baseUrl = process.env.RENDER_EXTERNAL_URL || 'https://review-ai-backend-03sb.onrender.com';
           const publicPngUrl = `${baseUrl}/api/auto-posts/banner/${savedHistoryItem._id}.png`;
 
           const publishResult = await publishPostToGoogle(
