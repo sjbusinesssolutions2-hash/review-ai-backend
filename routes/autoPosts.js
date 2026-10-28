@@ -1,0 +1,173 @@
+const express = require('express');
+const router = express.Router();
+const sharp = require('sharp');
+const User = require('../models/User');
+const AutoPostConfig = require('../models/AutoPostConfig');
+const { generateAutoPostText, generateAiPosterSvg } = require('../services/geminiAI');
+const { fetchLocationReviews } = require('../services/gbpService');
+
+// Banner PNG Rasterizer Endpoint
+router.get('/banner/:postId.png', async (req, res) => {
+  try {
+    const config = await AutoPostConfig.findOne({ 'history._id': req.params.postId });
+    if (!config) return res.status(404).send('Banner graphic not found');
+
+    const historyItem = config.history.id(req.params.postId);
+    if (!historyItem || !historyItem.svgContent) return res.status(404).send('Banner content missing');
+
+    const pngBuffer = await sharp(Buffer.from(historyItem.svgContent))
+      .resize(1200, 900, { fit: 'fill' })
+      .png()
+      .toBuffer();
+
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.send(pngBuffer);
+  } catch (err) {
+    console.error('Error rendering PNG banner:', err);
+    res.status(500).send('Error generating banner image');
+  }
+});
+
+// Get Auto-Post Configuration
+router.get('/config/:businessId', async (req, res) => {
+  try {
+    const { userId } = req.query;
+    let config = await AutoPostConfig.findOne({ businessId: req.params.businessId });
+    if (!config) {
+      config = await AutoPostConfig.create({ 
+        businessId: req.params.businessId,
+        userId: userId || null 
+      });
+    } else if (userId && !config.userId) {
+      config.userId = userId;
+      await config.save();
+    }
+    res.json({ success: true, config });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Update Auto-Post Preferences
+router.post('/config/:businessId', async (req, res) => {
+  try {
+    const { userId, enabled, frequency, preferredTime, topics, enableFestivals, enableReviewSpotlights } = req.body;
+    const businessId = req.params.businessId;
+
+    if (!userId) return res.status(400).json({ success: false, error: 'User ID is required.' });
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ success: false, error: 'User record not found.' });
+
+    const location = user.locations.find(l => 
+      l.locationId === businessId || 
+      l.accountLocationPath?.includes(businessId) || 
+      l.locationId?.includes(businessId)
+    );
+
+    if (!location || location.subscriptionStatus !== 'pro') {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Pro subscription required to save auto-post configurations.' 
+      });
+    }
+
+    const updateData = { enabled, frequency, preferredTime, topics, enableFestivals, enableReviewSpotlights, userId };
+
+    const config = await AutoPostConfig.findOneAndUpdate(
+      { businessId: businessId },
+      updateData,
+      { new: true, upsert: true }
+    );
+
+    res.json({ success: true, message: 'Settings saved successfully', config });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Get History
+router.get('/history/:businessId', async (req, res) => {
+  try {
+    const config = await AutoPostConfig.findOne({ businessId: req.params.businessId });
+    if (!config) return res.json({ success: true, posts: [] });
+    res.json({ success: true, posts: config.history || [] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Test Generate
+router.post('/test-generate', async (req, res) => {
+  try {
+    const { userId, businessId, locationName, category, topics, enableFestivals, enableReviewSpotlights } = req.body;
+
+    if (!userId) return res.status(400).json({ success: false, error: 'User ID is required.' });
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ success: false, error: 'User record not found.' });
+
+    const location = user.locations.find(l => 
+      l.locationId === businessId || 
+      l.accountLocationPath?.includes(businessId) || 
+      l.locationId?.includes(businessId)
+    );
+
+    if (!location || location.subscriptionStatus !== 'pro') {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Pro subscription required to run AI previews and auto-posts.' 
+      });
+    }
+
+    const bName = locationName || 'Our Business';
+    const bCat = category || 'Local Business';
+
+    let realReviewSnippet = '';
+    let reviewerName = '';
+
+    if (enableReviewSpotlights && userId) {
+      const targetLocation = (user.locations || []).find(l => l.locationId === businessId) || user.locations[0];
+      if (targetLocation && targetLocation.accountLocationPath) {
+        const liveData = await fetchLocationReviews(
+          user.accessToken,
+          targetLocation.accountLocationPath.split('/')[0] + '/' + targetLocation.accountLocationPath.split('/')[1],
+          targetLocation.accountLocationPath
+        );
+
+        const fiveStarReviews = (liveData.reviews || []).filter(r => 
+          (r.starRating === 'FIVE' || r.starRating === 5) && r.comment && r.comment.trim().length > 10
+        );
+
+        if (fiveStarReviews.length > 0) {
+          const selected = fiveStarReviews[Math.floor(Math.random() * fiveStarReviews.length)];
+          realReviewSnippet = selected.comment.trim();
+          reviewerName = (selected.reviewer && selected.reviewer.displayName) ? selected.reviewer.displayName : 'Happy Customer';
+        }
+      }
+    }
+
+    let postPrompt = topics;
+    if (realReviewSnippet && reviewerName) {
+      postPrompt = `Highlighting 5-star review from ${reviewerName}: "${realReviewSnippet}". ${topics || ''}`;
+    }
+
+    const postText = await generateAutoPostText(bName, bCat, postPrompt, enableFestivals, enableReviewSpotlights);
+    const imageUrl = await generateAiPosterSvg(bName, bCat, topics, enableFestivals);
+
+    res.json({
+      success: true,
+      postText: postText,
+      imageUrl: imageUrl,
+      reviewerUsed: reviewerName || null,
+      generatedAt: new Date().toISOString()
+    });
+
+  } catch (err) {
+    console.error('Error in test-generate route:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+module.exports = router;
