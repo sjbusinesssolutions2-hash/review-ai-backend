@@ -5,7 +5,7 @@ async function fetchLocationReviews(accessToken, accountName, locationName) {
       parentPath = `${accountName}/${locationName}`;
     }
 
-    const res = await fetch(`[https://mybusiness.googleapis.com/v4/$](https://mybusiness.googleapis.com/v4/$){parentPath}/reviews`, {
+    const res = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
@@ -41,7 +41,7 @@ async function fetchLocationReviews(accessToken, accountName, locationName) {
 
 async function publishPostToGoogle(accessToken, accountLocationPath, summary, publicImageUrl) {
   try {
-    const endpoint = `[https://mybusiness.googleapis.com/v4/$](https://mybusiness.googleapis.com/v4/$){accountLocationPath}/localPosts`;
+    const endpoint = `https://mybusiness.googleapis.com/v4/${accountLocationPath}/localPosts`;
 
     const postPayload = {
       languageCode: 'en-US',
@@ -49,7 +49,7 @@ async function publishPostToGoogle(accessToken, accountLocationPath, summary, pu
       topicType: 'STANDARD',
       callToAction: {
         actionType: 'LEARN_MORE',
-        url: '[https://sjbs.ai](https://sjbs.ai)'
+        url: 'https://sjbs.ai'
       }
     };
 
