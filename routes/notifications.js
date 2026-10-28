@@ -1,15 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const NotificationSettings = require('../models/NotificationSettings');
-const authMiddleware = require('../middleware/auth'); // Matches your existing token auth
 
-// GET: Fetch notification settings for logged-in user
-router.get('/settings', authMiddleware, async (req, res) => {
+// GET: Fetch notification settings
+router.get('/settings', async (req, res) => {
+  const userId = req.query.userId || req.headers.authorization;
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
   try {
-    let settings = await NotificationSettings.findOne({ userId: req.user._id });
+    let settings = await NotificationSettings.findOne({ userId });
     if (!settings) {
-      // Create default settings document if none exists yet
-      settings = new NotificationSettings({ userId: req.user._id });
+      settings = new NotificationSettings({ userId });
       await settings.save();
     }
     res.json(settings);
@@ -19,20 +20,17 @@ router.get('/settings', authMiddleware, async (req, res) => {
   }
 });
 
-// POST: Save/Upsert notification settings
-router.post('/settings', authMiddleware, async (req, res) => {
+// POST: Save notification settings
+router.post('/settings', async (req, res) => {
+  const userId = req.body.userId || req.headers.authorization;
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
   try {
     const { supportEmail, supportPhone, weeklyReport, criticalAlerts, productUpdates } = req.body;
 
     const updatedSettings = await NotificationSettings.findOneAndUpdate(
-      { userId: req.user._id },
-      { 
-        supportEmail, 
-        supportPhone, 
-        weeklyReport, 
-        criticalAlerts, 
-        productUpdates 
-      },
+      { userId },
+      { supportEmail, supportPhone, weeklyReport, criticalAlerts, productUpdates },
       { new: true, upsert: true }
     );
 
@@ -43,4 +41,4 @@ router.post('/settings', authMiddleware, async (req, res) => {
   }
 });
 
-app.use('/api/notifications', router); // Register route in your main server.js
+module.exports = router;
