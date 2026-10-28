@@ -1,50 +1,45 @@
 const express = require('express');
 const router = express.Router();
-const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const NotificationSettings = require('../models/NotificationSettings');
-
-// Helper to get userId from Authorization header
-const getUserIdFromReq = (req) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
-  const token = authHeader.split(' ')[1];
-  const decoded = jwt.verify(token, process.env.JWT_SECRET);
-  return decoded.userId || decoded.id; // Adjust based on your login token structure
-};
 
 // GET: Fetch notification settings
 router.get('/settings', async (req, res) => {
-  try {
-    const userId = getUserIdFromReq(req);
-    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  const userId = req.query.userId;
+  if (!userId) return res.status(401).json({ error: 'Unauthorized - Missing userId' });
 
-    let settings = await NotificationSettings.findOne({ userId });
+  try {
+    const objectId = new mongoose.Types.ObjectId(userId);
+    let settings = await NotificationSettings.findOne({ userId: objectId });
     if (!settings) {
-      settings = new NotificationSettings({ userId });
+      settings = new NotificationSettings({ userId: objectId });
       await settings.save();
     }
     res.json(settings);
   } catch (err) {
+    console.error('Error fetching notification settings:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // POST: Save notification settings
 router.post('/settings', async (req, res) => {
-  try {
-    const userId = getUserIdFromReq(req);
-    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  const userId = req.body.userId;
+  if (!userId) return res.status(401).json({ error: 'Unauthorized - Missing userId' });
 
+  try {
+    const objectId = new mongoose.Types.ObjectId(userId);
     const { supportEmail, supportPhone, weeklyReport, criticalAlerts, productUpdates } = req.body;
 
     const updatedSettings = await NotificationSettings.findOneAndUpdate(
-      { userId },
+      { userId: objectId },
       { supportEmail, supportPhone, weeklyReport, criticalAlerts, productUpdates },
       { new: true, upsert: true }
     );
 
     res.json({ success: true, settings: updatedSettings });
   } catch (err) {
+    console.error('Error saving notification settings:', err);
     res.status(500).json({ error: err.message });
   }
 });
