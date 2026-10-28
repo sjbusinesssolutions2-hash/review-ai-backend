@@ -3,16 +3,24 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const NotificationSettings = require('../models/NotificationSettings');
 
+// Helper to find settings by checking ObjectId or generic string (googleId)
+const findQuery = (userId) => {
+  if (mongoose.Types.ObjectId.isValid(userId) && userId.length === 24) {
+    return { userId: new mongoose.Types.ObjectId(userId) };
+  }
+  return { userId: userId }; // Fallback for googleId or string IDs
+};
+
 // GET: Fetch notification settings
 router.get('/settings', async (req, res) => {
   const userId = req.query.userId;
   if (!userId) return res.status(401).json({ error: 'Unauthorized - Missing userId' });
 
   try {
-    const objectId = new mongoose.Types.ObjectId(userId);
-    let settings = await NotificationSettings.findOne({ userId: objectId });
+    const query = findQuery(userId);
+    let settings = await NotificationSettings.findOne(query);
     if (!settings) {
-      settings = new NotificationSettings({ userId: objectId });
+      settings = new NotificationSettings(query);
       await settings.save();
     }
     res.json(settings);
@@ -28,11 +36,11 @@ router.post('/settings', async (req, res) => {
   if (!userId) return res.status(401).json({ error: 'Unauthorized - Missing userId' });
 
   try {
-    const objectId = new mongoose.Types.ObjectId(userId);
+    const query = findQuery(userId);
     const { supportEmail, supportPhone, weeklyReport, criticalAlerts, productUpdates } = req.body;
 
     const updatedSettings = await NotificationSettings.findOneAndUpdate(
-      { userId: objectId },
+      query,
       { supportEmail, supportPhone, weeklyReport, criticalAlerts, productUpdates },
       { new: true, upsert: true }
     );
