@@ -4,13 +4,13 @@ const passport = require('passport');
 const { google } = require('googleapis');
 const { fetchLocationReviews } = require('../services/gbpService');
 
-const frontendBaseUrl = process.env.FRONTEND_URL || '[https://sjbusinesssolutions2-hash.github.io/review-ai-app](https://sjbusinesssolutions2-hash.github.io/review-ai-app)';
+const frontendBaseUrl = process.env.FRONTEND_URL || 'https://sjbusinesssolutions2-hash.github.io/review-ai-app';
 
 router.get('/google', passport.authenticate('google', {
   scope: [
     'profile',
     'email',
-    '[https://www.googleapis.com/auth/business.manage](https://www.googleapis.com/auth/business.manage)'
+    'https://www.googleapis.com/auth/business.manage'
   ],
   accessType: 'offline',
   prompt: 'consent'
