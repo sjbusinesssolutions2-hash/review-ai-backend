@@ -1,37 +1,12 @@
 const cron = require('node-cron');
-const nodemailer = require('nodemailer');
 const User = require('../models/User');
 const AutoPostConfig = require('../models/AutoPostConfig');
 const NotificationSettings = require('../models/NotificationSettings');
 const { fetchLocationReviews, publishPostToGoogle, getValidAccessToken } = require('./gbpService');
 const { generate2LineAIReply, generateAutoPostText, generateAiPosterSvg } = require('./geminiAI');
 
-// Configure Nodemailer transporter using environment variables
-// Configure Nodemailer transporter using environment variables
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: Number(process.env.SMTP_PORT) || 465,
-  secure: true, // true for port 465, false for 587
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  tls: {
-    rejectUnauthorized: false
-  }
-});
-
-// Add this verification check right below to catch the exact error in your Render logs
-transporter.verify((error, success) => {
-  if (error) {
-    console.error('[SMTP Transport Error]', error);
-  } else {
-    console.log('[SMTP Transport] Server is ready to take our messages');
-  }
-});
-
-// Helper function to send email alerts to user's account email
-async function sendCriticalReviewAlert(targetEmail, review) {
+// Helper function to send email alerts to user's account email via Resend HTTP API
+async function sendCriticalReviewAlert(targetEmail, locationName, reviewerName, starRating, comment, replyText) {
   try {
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -40,13 +15,17 @@ async function sendCriticalReviewAlert(targetEmail, review) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        from: 'onboarding@resend.dev', // Resend's default test sender
-        to: [targetEmail],             // Dynamic client email from MongoDB
-        subject: `🚨 Critical Review Alert (${review.starRating} Stars)`,
+        from: 'onboarding@resend.dev',
+        to: [targetEmail],
+        subject: `🚨 Critical Review Alert (${starRating} Stars) - ${locationName}`,
         html: `
-          <h3>A low rating review was received on Google Maps.</h3>
-          <p><strong>Rating:</strong> ${review.starRating}</p>
-          <p><strong>Comment:</strong> ${review.comment || 'No comment provided'}</p>
+          <h3>A low rating review was received on Google Maps for ${locationName}.</h3>
+          <p><strong>Reviewer:</strong> ${reviewerName}</p>
+          <p><strong>Rating:</strong> ${starRating} Stars</p>
+          <p><strong>Comment:</strong> ${comment || 'No comment provided'}</p>
+          <hr />
+          <p><strong>Automated AI Reply Sent:</strong></p>
+          <p><em>"${replyText}"</em></p>
         `
       })
     });
@@ -61,7 +40,6 @@ async function sendCriticalReviewAlert(targetEmail, review) {
     console.error('[Email Alert Error]:', error.message);
   }
 }
-
 
 // 1. 24/7 Automated Background Auto-Reply Worker for Pro Businesses
 cron.schedule('*/5 * * * *', async () => {
@@ -100,7 +78,6 @@ cron.schedule('*/5 * * * *', async () => {
         if (!parentPath) continue;
 
         console.log(`[Auto-Reply Worker] Fetching reviews from Google for location: ${parentPath}`);
-        // Pass the user object so it auto-refreshes if needed
         const reviewData = await fetchLocationReviews(user, '', parentPath);
         console.log(`[Auto-Reply Worker] Fetched raw reviews count: ${reviewData.reviews ? reviewData.reviews.length : 0}`);
 
@@ -124,7 +101,6 @@ cron.schedule('*/5 * * * *', async () => {
           console.log(`[Auto-Reply Worker] Generated AI reply: "${replyText}"`);
 
           if (replyText) {
-            // Get a guaranteed valid access token for replying
             const validToken = await getValidAccessToken(user);
 
             const googleRes = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews/${review.reviewId}/reply`, {
@@ -241,7 +217,6 @@ cron.schedule('*/15 * * * *', async () => {
           const baseUrl = process.env.RENDER_EXTERNAL_URL || 'https://review-ai-backend-03sb.onrender.com';
           const publicPngUrl = `${baseUrl}/api/auto-posts/banner/${savedHistoryItem._id}.png`;
 
-          // Pass the user object so it auto-refreshes tokens for posting
           const publishResult = await publishPostToGoogle(
             user,
             targetLocation.accountLocationPath,
