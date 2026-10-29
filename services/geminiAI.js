@@ -6,15 +6,6 @@ const geminiKeys = rawKeysInput
   .map(k => k.trim())
   .filter(k => k.startsWith('AQ.'));
 
-function getSeasonalFestivalInfo(dateObj) {
-  const month = dateObj.getMonth();
-  if (month === 9 || month === 10) return "Diwali, Dhanteras, and peak festive season. Focus on festive celebrations, gear readiness, and community spirit.";
-  if (month === 0) return "Uttarayan / Makar Sankranti and New Year season.";
-  if (month === 2) return "Holi festival and spring tournament kickoff.";
-  if (month === 7) return "Independence Day and sports training season.";
-  return "Local seasonal highlights and community celebrations.";
-}
-
 // Sequential Key & Model Failover Engine for Review Replies (Handles 1-3 Star Escalations & Standard Replies)
 async function generate2LineAIReply(businessName, reviewerName, starRating, comment, supportEmail = '', supportPhone = '') {
   if (!geminiKeys || geminiKeys.length === 0) {
@@ -119,25 +110,25 @@ async function generateAutoPostText(locationName, category, topics, enableFestiv
 
   const now = new Date();
   const currentDate = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  const seasonalHint = getSeasonalFestivalInfo(now);
   
   let festivalContext = "Disabled";
   if (enableFestivals) {
-    festivalContext = `ENABLED for today (${currentDate}). Active Festival Context: ${seasonalHint}. Weave a warm, festive greeting naturally into the post if applicable.`;
+    festivalContext = `ENABLED for today (${currentDate}). If there is a major SECULAR or NATIONAL non-religious day today (like Republic Day, Independence Day, Earth Day, New Year), or a relevant local weather/seasonal vibe (like summer care, monsoon prep, winter comfort), weave it in naturally. Strictly EXCLUDE all religious festivals or symbols.`;
   }
 
   const prompt = `You are an expert social media manager for a local business named "${locationName || 'Our Business'}" (Category: ${category || 'Local Business'}).
 Generate an engaging Google Business Profile post based on these settings:
 - Today's Date: ${currentDate}
 - Topics/Focus: ${topics || 'General business highlights and customer service'}
-- Festival/Holiday Greetings: ${festivalContext}
-- Review Spotlight: ${enableReviewSpotlights ? 'Enabled (highlight customer satisfaction)' : 'Disabled'}
+- Seasonal & Event Context: ${festivalContext}
+- Review Spotlight: ${enableReviewSpotlights ? 'Enabled (highlight customer satisfaction naturally)' : 'Disabled'}
 
 Requirements:
-1. 2 to 4 sentences long.
-2. Professional, engaging, and inviting tone.
-3. Include 1 clear call-to-action (walk-ins or phone calls only, NO online booking) and 2 relevant hashtags.
-4. Avoid repetitive formulas or rigid templates.`;
+1. Write 2 to 4 sentences naturally as a business owner.
+2. Adapt seamlessly to the current time of year and weather/season if appropriate, without sounding forced.
+3. Strictly NON-RELIGIOUS. Never mention religious festivals or rituals.
+4. Include 1 clear call-to-action (walk-ins or phone calls only, NO online booking) and 2 relevant hashtags.
+5. Avoid repetitive templates or formulas. Make every post feel fresh.`;
 
   const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.6-flash'];
 
@@ -182,15 +173,15 @@ async function generateAiPosterSvg(locationName, category, topics, enableFestiva
   if (headline.length > 50) headline = headline.substring(0, 47) + '...';
 
   const now = new Date();
-  const seasonalHint = getSeasonalFestivalInfo(now);
-  
+  const currentDate = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
   const festivalInstruction = enableFestivals 
-    ? `FESTIVAL THEME ACTIVE: Feature the upcoming season/festival (${seasonalHint}) with tasteful celebratory accents.` 
-    : `Standard professional spotlight banner.`;
+    ? `SEASONAL & EVENT ACCENT ACTIVE (Date: ${currentDate}): Complement the graphic with subtle visual accents matching the current weather/season or non-religious national occasion. Strictly NO religious symbols.` 
+    : `Standard clean professional spotlight banner.`;
 
   const palettes = [
     { name: "Vintage Cream & Terracotta", bg: "#faf8f5", card: "#f2eae1", text: "#1c1917", accent: "#ea580c", border: "#e7e5e4" },
-    { name: "Festive Saffron & Gold", bg: "#fffbeb", card: "#fef3c7", text: "#451a03", accent: "#d97706", border: "#fde68a" },
+    { name: "Saffron & Gold Accent", bg: "#fffbeb", card: "#fef3c7", text: "#451a03", accent: "#d97706", border: "#fde68a" },
     { name: "Deep Forest & Mint", bg: "#f0fdf4", card: "#dcfce7", text: "#052e16", accent: "#16a34a", border: "#bbf7d0" },
     { name: "Midnight Navy & Sky", bg: "#f8fafc", card: "#e2e8f0", text: "#0f172a", accent: "#0284c7", border: "#cbd5e1" },
     { name: "Rich Burgundy & Rose", bg: "#fff1f2", card: "#ffe4e6", text: "#4c0519", accent: "#e11d48", border: "#fecdd3" },
@@ -217,8 +208,8 @@ DESIGN & COLOR DIRECTIVE:
    - Border / Line Color: ${selectedPalette.border}
 3. Layout & Typography: Clean editorial layout, beautiful spacing, professional hierarchy, vector graphics relevant to ${bCat}.
 4. Background Coverage: Ensure a root <rect width="1200" height="900" fill="${selectedPalette.bg}"/> covers the entire canvas edge-to-edge.
-5. Accuracy & Spelling: Double-check all rendered text for flawless English spelling and grammar (e.g., "Refurbishment", "Professional", "Services"). Do not invent misspelled words.
-6. Restrictions: NO customer reviews or star ratings in the graphic. Truthful workshop messaging only ("Walk-Ins Welcome • Direct Service").
+5. Accuracy & Spelling: Double-check all rendered text for flawless English spelling and grammar. Do not invent misspelled words.
+6. Restrictions: NO religious symbols or themes. NO customer reviews or star ratings in the graphic. Truthful workshop messaging only ("Walk-Ins Welcome • Direct Service").
 7. XML Safety: All tags properly closed, zero duplicate attributes.`;
 
   if (geminiKeys && geminiKeys.length > 0) {
