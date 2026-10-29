@@ -1,9 +1,58 @@
 const cron = require('node-cron');
+const nodemailer = require('nodemailer');
 const User = require('../models/User');
 const AutoPostConfig = require('../models/AutoPostConfig');
 const NotificationSettings = require('../models/NotificationSettings');
 const { fetchLocationReviews, publishPostToGoogle } = require('./gbpService');
 const { generate2LineAIReply, generateAutoPostText, generateAiPosterSvg } = require('./geminiAI');
+
+// Configure Nodemailer transporter using environment variables
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: Number(process.env.SMTP_PORT) || 587,
+  secure: false,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
+// Helper function to send email alerts to user's account email
+async function sendCriticalReviewAlert(toEmail, businessName, reviewerName, starRating, comment, aiReply) {
+  if (!toEmail) return;
+
+  const mailOptions = {
+    from: `"SJbs.AI Alerts" <${process.env.SMTP_USER}>`,
+    to: toEmail,
+    subject: `🚨 Critical Review Alert (${starRating} Stars) - ${businessName}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+        <h2 style="color: #dc2626;">New Low Rating Alert</h2>
+        <p>A <strong>${starRating}-star review</strong> was posted for <strong>${businessName}</strong>.</p>
+        
+        <div style="background: #f9fafb; padding: 15px; border-left: 4px solid #dc2626; margin: 15px 0;">
+          <p><strong>Reviewer:</strong> ${reviewerName}</p>
+          <p><strong>Rating:</strong> ${'⭐'.repeat(starRating)}</p>
+          <p><strong>Comment:</strong> "${comment || 'No comment provided'}"</p>
+        </div>
+
+        <h3>Automated AI Response Posted to Google:</h3>
+        <p style="font-style: italic; background: #eff6ff; padding: 12px; border-radius: 8px;">"${aiReply}"</p>
+
+        <p style="font-size: 12px; color: #6b7280; margin-top: 20px;">
+          This email was sent to your registered account address (${toEmail}).
+        </p>
+      </div>
+    `
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[Email Alert] Critical review notification sent to user account email: ${toEmail}`);
+  } catch (err) {
+    console.error('[Email Alert] Failed to send email notification:', err.message);
+  }
+}
 
 // 1. 24/7 Automated Background Auto-Reply Worker for Pro Businesses
 cron.schedule('*/5 * * * *', async () => {
@@ -21,6 +70,7 @@ cron.schedule('*/5 * * * *', async () => {
       const settings = await NotificationSettings.findOne({ userId: user._id });
       const supportEmail = settings?.supportEmail || '';
       const supportPhone = settings?.supportPhone || '';
+      const isCriticalEmailEnabled = settings?.criticalAlerts?.email !== false;
 
       for (const loc of user.locations) {
         if (loc.subscriptionStatus !== 'pro' || !loc.autoReplyEnabled) continue;
@@ -61,6 +111,18 @@ cron.schedule('*/5 * * * *', async () => {
 
             if (googleRes.ok) {
               console.log(`[Auto-Reply Worker] Successfully replied automatically for location: ${loc.locationName}`);
+
+              // Trigger instant email notification to logged-in user email for critical reviews (1-3 stars)
+              if (starVal <= 3 && isCriticalEmailEnabled && user.email) {
+                await sendCriticalReviewAlert(
+                  user.email,
+                  loc.locationName,
+                  reviewerName,
+                  starVal,
+                  review.comment || '',
+                  replyText
+                );
+              }
             }
           }
         }
