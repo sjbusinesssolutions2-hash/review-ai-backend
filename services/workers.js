@@ -31,41 +31,37 @@ transporter.verify((error, success) => {
 });
 
 // Helper function to send email alerts to user's account email
-async function sendCriticalReviewAlert(toEmail, businessName, reviewerName, starRating, comment, aiReply) {
-  if (!toEmail) return;
-
-  const mailOptions = {
-    from: `"SJbs.AI Alerts" <${process.env.SMTP_USER}>`,
-    to: toEmail,
-    subject: `🚨 Critical Review Alert (${starRating} Stars) - ${businessName}`,
-    html: `
-      <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-        <h2 style="color: #dc2626;">New Low Rating Alert</h2>
-        <p>A <strong>${starRating}-star review</strong> was posted for <strong>${businessName}</strong>.</p>
-        
-        <div style="background: #f9fafb; padding: 15px; border-left: 4px solid #dc2626; margin: 15px 0;">
-          <p><strong>Reviewer:</strong> ${reviewerName}</p>
-          <p><strong>Rating:</strong> ${'⭐'.repeat(starRating)}</p>
-          <p><strong>Comment:</strong> "${comment || 'No comment provided'}"</p>
-        </div>
-
-        <h3>Automated AI Response Posted to Google:</h3>
-        <p style="font-style: italic; background: #eff6ff; padding: 12px; border-radius: 8px;">"${aiReply}"</p>
-
-        <p style="font-size: 12px; color: #6b7280; margin-top: 20px;">
-          This email was sent to your registered account address (${toEmail}).
-        </p>
-      </div>
-    `
-  };
-
+async function sendCriticalReviewAlert(targetEmail, review) {
   try {
-    await transporter.sendMail(mailOptions);
-    console.log(`[Email Alert] Critical review notification sent to user account email: ${toEmail}`);
-  } catch (err) {
-    console.error('[Email Alert] Failed to send email notification:', err.message);
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: 'onboarding@resend.dev', // Resend's default test sender
+        to: [targetEmail],             // Dynamic client email from MongoDB
+        subject: `🚨 Critical Review Alert (${review.starRating} Stars)`,
+        html: `
+          <h3>A low rating review was received on Google Maps.</h3>
+          <p><strong>Rating:</strong> ${review.starRating}</p>
+          <p><strong>Comment:</strong> ${review.comment || 'No comment provided'}</p>
+        `
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to send email via Resend API');
+    }
+
+    console.log('[Email Alert] Successfully sent via Resend API to:', targetEmail);
+  } catch (error) {
+    console.error('[Email Alert Error]:', error.message);
   }
 }
+
 
 // 1. 24/7 Automated Background Auto-Reply Worker for Pro Businesses
 cron.schedule('*/5 * * * *', async () => {
