@@ -90,12 +90,8 @@ cron.schedule('*/5 * * * *', async () => {
         console.log(`[Auto-Reply Worker] parentPath for ${loc.locationName}: "${parentPath}"`);
         if (!parentPath) continue;
 
-        const pathParts = parentPath.split('/');
-        const accountName = `${pathParts[0]}/${pathParts[1]}`;
-        const locationName = `${pathParts[2]}/${pathParts[3]}`;
-
-        console.log(`[Auto-Reply Worker] Fetching reviews from Google for account: ${accountName}, location: ${locationName}`);
-        const reviewData = await fetchLocationReviews(user.accessToken, accountName, locationName);
+        console.log(`[Auto-Reply Worker] Fetching reviews from Google for location: ${parentPath}`);
+        const reviewData = await fetchLocationReviews(user.accessToken, '', parentPath);
         console.log(`[Auto-Reply Worker] Fetched raw reviews count: ${reviewData.reviews ? reviewData.reviews.length : 0}`);
 
         const unreplied = (reviewData.reviews || []).filter(r => !r.reviewReply);
