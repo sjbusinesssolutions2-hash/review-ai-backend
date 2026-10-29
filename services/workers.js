@@ -56,44 +56,56 @@ async function sendCriticalReviewAlert(toEmail, businessName, reviewerName, star
 
 // 1. 24/7 Automated Background Auto-Reply Worker for Pro Businesses
 cron.schedule('*/5 * * * *', async () => {
-  console.log('[Auto-Reply Worker] Running periodic check for unanswered reviews across Pro locations...');
+  console.log('[Auto-Reply Worker] === STARTING PERIODIC REVIEW CHECK ===');
   try {
     const users = await User.find({
-  locations: {
-    $elemMatch: {
-      subscriptionStatus: 'pro',
-      autoReplyEnabled: true
-    }
-  }
-});
+      locations: {
+        $elemMatch: {
+          subscriptionStatus: 'pro',
+          autoReplyEnabled: true
+        }
+      }
+    });
+
+    console.log(`[Auto-Reply Worker] Found ${users.length} user(s) matching Pro + AutoReply query.`);
 
     for (const user of users) {
-      if (!user.accessToken) continue;
+      console.log(`[Auto-Reply Worker] Inspecting user ID: ${user._id}, hasAccessToken: ${!!user.accessToken}`);
+      if (!user.accessToken) {
+        console.log(`[Auto-Reply Worker] SKIPPED USER: Missing accessToken.`);
+        continue;
+      }
 
-      // Retrieve user's support settings
       const settings = await NotificationSettings.findOne({ userId: user._id });
       const supportEmail = settings?.supportEmail || '';
       const supportPhone = settings?.supportPhone || '';
       const isCriticalEmailEnabled = settings?.criticalAlerts?.email !== false;
 
       for (const loc of user.locations) {
+        console.log(`[Auto-Reply Worker] Checking location: "${loc.locationName}", status: "${loc.subscriptionStatus}", autoReply: ${loc.autoReplyEnabled}`);
+
         if (loc.subscriptionStatus !== 'pro' || !loc.autoReplyEnabled) continue;
 
         const parentPath = loc.accountLocationPath;
+        console.log(`[Auto-Reply Worker] parentPath for ${loc.locationName}: "${parentPath}"`);
         if (!parentPath) continue;
 
         const pathParts = parentPath.split('/');
         const accountName = `${pathParts[0]}/${pathParts[1]}`;
         const locationName = `${pathParts[2]}/${pathParts[3]}`;
 
+        console.log(`[Auto-Reply Worker] Fetching reviews from Google for account: ${accountName}, location: ${locationName}`);
         const reviewData = await fetchLocationReviews(user.accessToken, accountName, locationName);
+        console.log(`[Auto-Reply Worker] Fetched raw reviews count: ${reviewData.reviews ? reviewData.reviews.length : 0}`);
+
         const unreplied = (reviewData.reviews || []).filter(r => !r.reviewReply);
+        console.log(`[Auto-Reply Worker] Unreplied reviews count: ${unreplied.length}`);
 
         for (const review of unreplied) {
+          console.log(`[Auto-Reply Worker] Processing review ID: ${review.reviewId}, Rating: ${review.starRating}`);
           const reviewerName = review.reviewer && review.reviewer.displayName ? review.reviewer.displayName : 'Customer';
           const starVal = review.starRating === 'FIVE' ? 5 : review.starRating === 'FOUR' ? 4 : review.starRating === 'THREE' ? 3 : review.starRating === 'TWO' ? 2 : 1;
           
-          // Generate reply passing support email and phone for low ratings (1 to 3 stars)
           const replyText = await generate2LineAIReply(
             loc.locationName, 
             reviewerName, 
@@ -102,6 +114,8 @@ cron.schedule('*/5 * * * *', async () => {
             supportEmail, 
             supportPhone
           );
+
+          console.log(`[Auto-Reply Worker] Generated AI reply: "${replyText}"`);
 
           if (replyText) {
             const googleRes = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews/${review.reviewId}/reply`, {
@@ -113,11 +127,13 @@ cron.schedule('*/5 * * * *', async () => {
               body: JSON.stringify({ comment: replyText })
             });
 
+            console.log(`[Auto-Reply Worker] Google reply API response status: ${googleRes.status}`);
+
             if (googleRes.ok) {
               console.log(`[Auto-Reply Worker] Successfully replied automatically for location: ${loc.locationName}`);
 
-              // Trigger instant email notification to logged-in user email for critical reviews (1-3 stars)
               if (starVal <= 3 && isCriticalEmailEnabled && user.email) {
+                console.log(`[Auto-Reply Worker] Triggering critical review email alert to: ${user.email}`);
                 await sendCriticalReviewAlert(
                   user.email,
                   loc.locationName,
@@ -127,13 +143,16 @@ cron.schedule('*/5 * * * *', async () => {
                   replyText
                 );
               }
+            } else {
+              const errBody = await googleRes.text();
+              console.error(`[Auto-Reply Worker] Failed to post reply to Google: ${errBody}`);
             }
           }
         }
       }
     }
   } catch (err) {
-    console.error('[Auto-Reply Worker] Error executing background worker:', err.message);
+    console.error('[Auto-Reply Worker] CRITICAL EXCEPTION:', err.message, err.stack);
   }
 });
 
