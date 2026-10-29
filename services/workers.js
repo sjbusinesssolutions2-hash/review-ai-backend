@@ -3,7 +3,7 @@ const nodemailer = require('nodemailer');
 const User = require('../models/User');
 const AutoPostConfig = require('../models/AutoPostConfig');
 const NotificationSettings = require('../models/NotificationSettings');
-const { fetchLocationReviews, publishPostToGoogle } = require('./gbpService');
+const { fetchLocationReviews, publishPostToGoogle, getValidAccessToken } = require('./gbpService');
 const { generate2LineAIReply, generateAutoPostText, generateAiPosterSvg } = require('./geminiAI');
 
 // Configure Nodemailer transporter using environment variables
@@ -71,8 +71,8 @@ cron.schedule('*/5 * * * *', async () => {
 
     for (const user of users) {
       console.log(`[Auto-Reply Worker] Inspecting user ID: ${user._id}, hasAccessToken: ${!!user.accessToken}`);
-      if (!user.accessToken) {
-        console.log(`[Auto-Reply Worker] SKIPPED USER: Missing accessToken.`);
+      if (!user.accessToken && !user.refreshToken) {
+        console.log(`[Auto-Reply Worker] SKIPPED USER: Missing tokens.`);
         continue;
       }
 
@@ -91,7 +91,8 @@ cron.schedule('*/5 * * * *', async () => {
         if (!parentPath) continue;
 
         console.log(`[Auto-Reply Worker] Fetching reviews from Google for location: ${parentPath}`);
-        const reviewData = await fetchLocationReviews(user.accessToken, '', parentPath);
+        // Pass the user object so it auto-refreshes if needed
+        const reviewData = await fetchLocationReviews(user, '', parentPath);
         console.log(`[Auto-Reply Worker] Fetched raw reviews count: ${reviewData.reviews ? reviewData.reviews.length : 0}`);
 
         const unreplied = (reviewData.reviews || []).filter(r => !r.reviewReply);
@@ -114,10 +115,13 @@ cron.schedule('*/5 * * * *', async () => {
           console.log(`[Auto-Reply Worker] Generated AI reply: "${replyText}"`);
 
           if (replyText) {
+            // Get a guaranteed valid access token for replying
+            const validToken = await getValidAccessToken(user);
+
             const googleRes = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews/${review.reviewId}/reply`, {
               method: 'PUT',
               headers: {
-                'Authorization': `Bearer ${user.accessToken}`,
+                'Authorization': `Bearer ${validToken}`,
                 'Content-Type': 'application/json'
               },
               body: JSON.stringify({ comment: replyText })
@@ -173,7 +177,7 @@ cron.schedule('*/15 * * * *', async () => {
       if (!isTimeMatch) continue;
 
       const user = await User.findById(config.userId);
-      if (!user || !user.accessToken) continue;
+      if (!user || (!user.accessToken && !user.refreshToken)) continue;
 
       const targetLocation = (user.locations || []).find(l => l.locationId === config.businessId);
       if (!targetLocation || !targetLocation.accountLocationPath) continue;
@@ -228,8 +232,9 @@ cron.schedule('*/15 * * * *', async () => {
           const baseUrl = process.env.RENDER_EXTERNAL_URL || 'https://review-ai-backend-03sb.onrender.com';
           const publicPngUrl = `${baseUrl}/api/auto-posts/banner/${savedHistoryItem._id}.png`;
 
+          // Pass the user object so it auto-refreshes tokens for posting
           const publishResult = await publishPostToGoogle(
-            user.accessToken,
+            user,
             targetLocation.accountLocationPath,
             postText,
             publicPngUrl
