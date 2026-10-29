@@ -71,8 +71,11 @@ cron.schedule('*/5 * * * *', async () => {
               body: JSON.stringify({ comment: replyText })
             });
 
-            if (googleRes.ok && starVal <= 3 && isCriticalEmailEnabled && user.email) {
-              await sendCriticalReviewAlert(user.email, loc.locationName, reviewerName, starVal, review.comment || '', replyText);
+            if (googleRes.ok) {
+              console.log(`[Auto-Reply] Successfully replied to review for ${loc.locationName}`);
+              if (starVal <= 3 && isCriticalEmailEnabled && user.email) {
+                await sendCriticalReviewAlert(user.email, loc.locationName, reviewerName, starVal, review.comment || '', replyText);
+              }
             }
           }
         }
@@ -84,7 +87,7 @@ cron.schedule('*/5 * * * *', async () => {
 });
 
 // 2. Auto-Post Worker (Every 15 mins)
-cron.schedule('*/5 * * * *', async () => {
+cron.schedule('*/15 * * * *', async () => {
   try {
     const activeConfigs = await AutoPostConfig.find({ enabled: true });
     if (!activeConfigs.length) return;
@@ -99,27 +102,16 @@ cron.schedule('*/5 * * * *', async () => {
       const prefTotalMinutes = prefHour * 60 + prefMinute;
 
       const diff = currentTotalMinutes - prefTotalMinutes;
-
-      // Debug check: remove after testing
-      console.log(`[Auto-Post Check] Config ID: ${config._id} | Preferred: ${config.preferredTime} | IST Now: ${istTimeStr} | Diff: ${diff} mins`);
-
       if (diff < 0 || diff >= 15) continue;
 
       const user = await User.findById(config.userId);
-      if (!user || (!user.accessToken && !user.refreshToken)) {
-        console.log(`[Auto-Post] Skipped: User missing or unauthenticated.`);
-        continue;
-      }
+      if (!user || (!user.accessToken && !user.refreshToken)) continue;
 
-      // Match either exact ID or path end
       const targetLocation = (user.locations || []).find(
         l => l.locationId === config.businessId || l.accountLocationPath?.includes(config.businessId)
       );
 
-      if (!targetLocation || !targetLocation.accountLocationPath) {
-        console.log(`[Auto-Post] Skipped: Location match not found for businessId ${config.businessId}`);
-        continue;
-      }
+      if (!targetLocation || !targetLocation.accountLocationPath) continue;
 
       let shouldPublish = false;
       if (!config.lastPostedAt) {
@@ -132,6 +124,8 @@ cron.schedule('*/5 * * * *', async () => {
       }
 
       if (shouldPublish) {
+        console.log(`[Auto-Post] Processing scheduled post for ${targetLocation.locationName}...`);
+
         const bName = targetLocation.locationName || 'Our Business';
         const postText = await generateAutoPostText(bName, 'Local Business', config.topics, config.enableFestivals, config.enableReviewSpotlights);
         const svgContent = await generateAiPosterSvg(bName, 'Local Business', config.topics, config.enableFestivals);
@@ -159,7 +153,7 @@ cron.schedule('*/5 * * * *', async () => {
           savedHistoryItem.status = 'FAILED';
           savedHistoryItem.errorDetails = publishResult.error;
           await config.save();
-          console.error(`[Auto-Post Error]:`, publishResult.error);
+          console.error(`[Auto-Post Error] Failed for ${targetLocation.locationName}:`, publishResult.error);
         }
       }
     }
@@ -167,5 +161,3 @@ cron.schedule('*/5 * * * *', async () => {
     console.error('[Auto-Post Worker Error]:', err.message);
   }
 });
-
-        
