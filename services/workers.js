@@ -85,9 +85,10 @@ cron.schedule('*/5 * * * *', async () => {
 
 // 2. Auto-Post Worker (Every 15 mins)
 cron.schedule('*/15 * * * *', async () => {
-  console.log('[Auto-Post Worker] Checking scheduled posts...');
   try {
     const activeConfigs = await AutoPostConfig.find({ enabled: true });
+    if (!activeConfigs.length) return;
+
     const now = new Date();
     const istTimeStr = now.toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour12: false });
     const [currentHour, currentMinute] = istTimeStr.split(':').map(Number);
@@ -98,13 +99,27 @@ cron.schedule('*/15 * * * *', async () => {
       const prefTotalMinutes = prefHour * 60 + prefMinute;
 
       const diff = currentTotalMinutes - prefTotalMinutes;
+
+      // Debug check: remove after testing
+      console.log(`[Auto-Post Check] Config ID: ${config._id} | Preferred: ${config.preferredTime} | IST Now: ${istTimeStr} | Diff: ${diff} mins`);
+
       if (diff < 0 || diff >= 15) continue;
 
       const user = await User.findById(config.userId);
-      if (!user || (!user.accessToken && !user.refreshToken)) continue;
+      if (!user || (!user.accessToken && !user.refreshToken)) {
+        console.log(`[Auto-Post] Skipped: User missing or unauthenticated.`);
+        continue;
+      }
 
-      const targetLocation = (user.locations || []).find(l => l.locationId === config.businessId);
-      if (!targetLocation || !targetLocation.accountLocationPath) continue;
+      // Match either exact ID or path end
+      const targetLocation = (user.locations || []).find(
+        l => l.locationId === config.businessId || l.accountLocationPath?.includes(config.businessId)
+      );
+
+      if (!targetLocation || !targetLocation.accountLocationPath) {
+        console.log(`[Auto-Post] Skipped: Location match not found for businessId ${config.businessId}`);
+        continue;
+      }
 
       let shouldPublish = false;
       if (!config.lastPostedAt) {
@@ -152,4 +167,5 @@ cron.schedule('*/15 * * * *', async () => {
     console.error('[Auto-Post Worker Error]:', err.message);
   }
 });
+
         
