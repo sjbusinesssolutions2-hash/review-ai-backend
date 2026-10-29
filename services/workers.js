@@ -6,7 +6,7 @@ const { fetchLocationReviews, publishPostToGoogle } = require('./gbpService');
 const { generate2LineAIReply, generateAutoPostText, generateAiPosterSvg } = require('./geminiAI');
 
 // 1. 24/7 Automated Background Auto-Reply Worker for Pro Businesses
-cron.schedule('*/15 * * * *', async () => {
+cron.schedule('*/5 * * * *', async () => {
   console.log('[Auto-Reply Worker] Running periodic check for unanswered reviews across Pro locations...');
   try {
     const users = await User.find({ 
