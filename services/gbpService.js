@@ -1,5 +1,45 @@
-async function fetchLocationReviews(accessToken, accountName, locationName) {
+async function getValidAccessToken(user) {
+  if (!user || !user.refreshToken) return user?.accessToken;
+
   try {
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        refresh_token: user.refreshToken,
+        grant_type: 'refresh_token'
+      })
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.access_token) {
+        user.accessToken = data.access_token;
+        await user.save();
+        console.log(`[Auth] Successfully refreshed access token for user: ${user._id}`);
+        return data.access_token;
+      }
+    } else {
+      const errText = await response.text();
+      console.error(`[Auth] Failed to refresh access token:`, errText);
+    }
+  } catch (err) {
+    console.error(`[Auth] Error refreshing token:`, err.message);
+  }
+
+  return user.accessToken;
+}
+
+async function fetchLocationReviews(userOrToken, accountName, locationName) {
+  try {
+    // Automatically support passing either a user object or a raw token string
+    let accessToken = userOrToken;
+    if (typeof userOrToken === 'object' && userOrToken !== null) {
+      accessToken = await getValidAccessToken(userOrToken);
+    }
+
     let parentPath = locationName;
     if (locationName.startsWith('accounts/')) {
       parentPath = locationName;
@@ -46,8 +86,13 @@ async function fetchLocationReviews(accessToken, accountName, locationName) {
   return { reviews: [], reviewCount: 0, rating: 5.0, parentPath: locationName };
 }
 
-async function publishPostToGoogle(accessToken, accountLocationPath, summary, publicImageUrl) {
+async function publishPostToGoogle(userOrToken, accountLocationPath, summary, publicImageUrl) {
   try {
+    let accessToken = userOrToken;
+    if (typeof userOrToken === 'object' && userOrToken !== null) {
+      accessToken = await getValidAccessToken(userOrToken);
+    }
+
     const endpoint = `https://mybusiness.googleapis.com/v4/${accountLocationPath}/localPosts`;
 
     const postPayload = {
@@ -89,6 +134,7 @@ async function publishPostToGoogle(accessToken, accountLocationPath, summary, pu
 }
 
 module.exports = {
+  getValidAccessToken,
   fetchLocationReviews,
   publishPostToGoogle
 };
