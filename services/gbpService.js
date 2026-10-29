@@ -1,9 +1,13 @@
 async function fetchLocationReviews(accessToken, accountName, locationName) {
   try {
     let parentPath = locationName;
-    if (!locationName.startsWith('accounts/')) {
+    if (locationName.startsWith('accounts/')) {
+      parentPath = locationName;
+    } else if (accountName) {
       parentPath = `${accountName}/${locationName}`;
     }
+
+    console.log(`[gbpService] Fetching reviews from endpoint: https://mybusiness.googleapis.com/v4/${parentPath}/reviews`);
 
     const res = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
       headers: {
@@ -32,6 +36,9 @@ async function fetchLocationReviews(accessToken, accountName, locationName) {
         rating: parseFloat(rating.toFixed(1)),
         parentPath
       };
+    } else {
+      const errText = await res.text();
+      console.error(`[gbpService] Google Reviews API Error (${res.status}):`, errText);
     }
   } catch (err) {
     console.warn(`Fetch reviews notice for ${locationName}:`, err.message);
