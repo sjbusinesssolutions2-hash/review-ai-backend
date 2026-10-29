@@ -58,10 +58,14 @@ async function sendCriticalReviewAlert(toEmail, businessName, reviewerName, star
 cron.schedule('*/5 * * * *', async () => {
   console.log('[Auto-Reply Worker] Running periodic check for unanswered reviews across Pro locations...');
   try {
-    const users = await User.find({ 
-      'locations.subscriptionStatus': 'pro', 
-      'locations.autoReplyEnabled': true 
-    });
+    const users = await User.find({
+  locations: {
+    $elemMatch: {
+      subscriptionStatus: 'pro',
+      autoReplyEnabled: true
+    }
+  }
+});
 
     for (const user of users) {
       if (!user.accessToken) continue;
