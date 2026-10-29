@@ -84,7 +84,7 @@ cron.schedule('*/5 * * * *', async () => {
 });
 
 // 2. Auto-Post Worker (Every 15 mins)
-cron.schedule('*/15 * * * *', async () => {
+cron.schedule('*/5 * * * *', async () => {
   try {
     const activeConfigs = await AutoPostConfig.find({ enabled: true });
     if (!activeConfigs.length) return;
