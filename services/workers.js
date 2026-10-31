@@ -36,6 +36,7 @@ async function sendCriticalReviewAlert(targetEmail, locationName, reviewerName, 
 
 // 1. Auto-Reply Worker (Every 5 mins)
 cron.schedule('*/5 * * * *', async () => {
+  console.log('[Auto-Reply Worker] Running periodic check for unanswered reviews across Pro locations...');
   try {
     const users = await User.find({
       locations: { $elemMatch: { subscriptionStatus: 'pro', autoReplyEnabled: true } }
@@ -54,6 +55,7 @@ cron.schedule('*/5 * * * *', async () => {
         const parentPath = loc.accountLocationPath;
         if (!parentPath) continue;
 
+        console.log(`[Auto-Reply] Processing reviews for business: ${loc.locationName || parentPath}`);
         const reviewData = await fetchLocationReviews(user, '', parentPath);
         const unreplied = (reviewData.reviews || []).filter(r => !r.reviewReply);
 
@@ -72,10 +74,12 @@ cron.schedule('*/5 * * * *', async () => {
             });
 
             if (googleRes.ok) {
-              console.log(`[Auto-Reply] Successfully replied to review for ${loc.locationName}`);
+              console.log(`[Auto-Reply Success] Replied to review for business: ${loc.locationName || parentPath}`);
               if (starVal <= 3 && isCriticalEmailEnabled && user.email) {
                 await sendCriticalReviewAlert(user.email, loc.locationName, reviewerName, starVal, review.comment || '', replyText);
               }
+            } else {
+              console.error(`[Auto-Reply Failed] Could not reply for business: ${loc.locationName || parentPath}`);
             }
           }
         }
@@ -88,6 +92,7 @@ cron.schedule('*/5 * * * *', async () => {
 
 // 2. Auto-Post Worker (Every 15 mins)
 cron.schedule('*/15 * * * *', async () => {
+  console.log('[Auto-Post Worker] Checking active configurations...');
   try {
     const activeConfigs = await AutoPostConfig.find({ enabled: true });
     if (!activeConfigs.length) return;
@@ -101,6 +106,7 @@ cron.schedule('*/15 * * * *', async () => {
       const [prefHour, prefMinute] = (config.preferredTime || '10:00').split(':').map(Number);
       const prefTotalMinutes = prefHour * 60 + prefMinute;
 
+      // Catches custom times (like 2:20) in the closest 15-minute cron execution
       const diff = currentTotalMinutes - prefTotalMinutes;
       if (diff < 0 || diff >= 15) continue;
 
@@ -124,11 +130,11 @@ cron.schedule('*/15 * * * *', async () => {
       }
 
       if (shouldPublish) {
-        console.log(`[Auto-Post] Processing scheduled post for ${targetLocation.locationName}...`);
+        const businessName = targetLocation.locationName || 'Our Business';
+        console.log(`[Auto-Post] Processing scheduled post for business: ${businessName}`);
 
-        const bName = targetLocation.locationName || 'Our Business';
-        const postText = await generateAutoPostText(bName, 'Local Business', config.topics, config.enableFestivals, config.enableReviewSpotlights);
-        const svgContent = await generateAiPosterSvg(bName, 'Local Business', config.topics, config.enableFestivals);
+        const postText = await generateAutoPostText(businessName, 'Local Business', config.topics, config.enableFestivals, config.enableReviewSpotlights);
+        const svgContent = await generateAiPosterSvg(businessName, 'Local Business', config.topics, config.enableFestivals);
 
         if (!svgContent) continue;
 
@@ -148,12 +154,12 @@ cron.schedule('*/15 * * * *', async () => {
           savedHistoryItem.googlePostId = publishResult.googlePostId || null;
           config.lastPostedAt = now;
           await config.save();
-          console.log(`[Auto-Post] Successfully published for ${targetLocation.locationName}`);
+          console.log(`[Auto-Post Success] Successfully published post for business: ${businessName}`);
         } else {
           savedHistoryItem.status = 'FAILED';
           savedHistoryItem.errorDetails = publishResult.error;
           await config.save();
-          console.error(`[Auto-Post Error] Failed for ${targetLocation.locationName}:`, publishResult.error);
+          console.error(`[Auto-Post Failed] Failed for business: ${businessName} -`, publishResult.error);
         }
       }
     }
@@ -161,3 +167,5 @@ cron.schedule('*/15 * * * *', async () => {
     console.error('[Auto-Post Worker Error]:', err.message);
   }
 });
+
+module.exports = {};
