@@ -118,6 +118,7 @@ router.get('/history/:businessId', async (req, res) => {
 });
 
 // Test Generate
+// Test Generate
 router.post('/test-generate', async (req, res) => {
   try {
     const { userId, businessId, locationName, category, topics, enableFestivals, enableReviewSpotlights } = req.body;
@@ -175,27 +176,20 @@ router.post('/test-generate', async (req, res) => {
     const postText = await generateAutoPostText(bName, bCat, postPrompt, enableFestivals, enableReviewSpotlights);
     const rawSvg = await generateAiPosterSvg(bName, bCat, topics, enableFestivals);
 
-    // Save preview to config history so the banner rasterizer endpoint can serve it instantly as a PNG
-    let config = await AutoPostConfig.findOne({ businessId });
-    if (!config) {
-      config = await AutoPostConfig.create({ businessId, userId, history: [] });
-    }
+    // Clean SVG and convert directly to PNG buffer using Sharp without touching the DB
+    const cleanedSvg = cleanSvgForSharp(rawSvg);
+    const pngBuffer = await sharp(Buffer.from(cleanedSvg))
+      .resize(1200, 900, { fit: 'fill' })
+      .png()
+      .toBuffer();
 
-    config.history.push({
-      postText,
-      svgContent: rawSvg,
-      status: 'PREVIEW',
-      createdAt: new Date()
-    });
-
-    await config.save();
-    const latestHistoryItem = config.history[config.history.length - 1];
-    const bannerUrl = `/api/auto-posts/banner/${latestHistoryItem._id}.png`;
+    // Convert buffer to a direct base64 data URI for instant frontend display
+    const base64Image = `data:image/png;base64,${pngBuffer.toString('base64')}`;
 
     res.json({
       success: true,
       postText: postText,
-      imageUrl: bannerUrl,
+      imageUrl: base64Image,
       reviewerUsed: reviewerName || null,
       generatedAt: new Date().toISOString()
     });
