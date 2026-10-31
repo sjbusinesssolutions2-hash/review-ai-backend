@@ -18,7 +18,6 @@ async function getValidAccessToken(user) {
       if (data.access_token) {
         user.accessToken = data.access_token;
         await user.save();
-        console.log(`[Auth] Successfully refreshed access token for user: ${user._id}`);
         return data.access_token;
       }
     } else {
@@ -46,8 +45,6 @@ async function fetchLocationReviews(userOrToken, accountName, locationName) {
     } else if (accountName) {
       parentPath = `${accountName}/${locationName}`;
     }
-
-    console.log(`[gbpService] Fetching reviews from endpoint: https://mybusiness.googleapis.com/v4/${parentPath}/reviews`);
 
     const res = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
       headers: {
