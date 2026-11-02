@@ -5,6 +5,9 @@ const NotificationSettings = require('../models/NotificationSettings');
 const { fetchLocationReviews, publishPostToGoogle, getValidAccessToken } = require('./gbpService');
 const { generate2LineAIReply, generateAutoPostText, generateAiPosterSvg } = require('./geminiAI');
 
+// Helper delay utility to space out heavy API calls and prevent memory spikes
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 async function sendCriticalReviewAlert(targetEmail, locationName, reviewerName, starRating, comment, replyText) {
   try {
     const response = await fetch('https://api.resend.com/emails', {
@@ -113,9 +116,9 @@ cron.schedule('*/15 * * * *', async () => {
       const [prefHour, prefMinute] = (config.preferredTime || '10:00').split(':').map(Number);
       const prefTotalMinutes = prefHour * 60 + prefMinute;
 
-      // Catches scheduled time in the closest 15-minute cron window
+      // Allow a 30-minute lookup window so custom times (like 12:18) run safely at 12:30
       const diff = currentTotalMinutes - prefTotalMinutes;
-      if (diff < 0 || diff >= 15) continue;
+      if (diff < 0 || diff >= 30) continue;
 
       const user = await User.findById(config.userId);
       if (!user || (!user.accessToken && !user.refreshToken)) continue;
@@ -147,34 +150,41 @@ cron.schedule('*/15 * * * *', async () => {
         const businessName = targetLocation.locationName || 'Our Business';
         console.log(`[Auto-Post] Processing scheduled post for business: ${businessName}`);
 
-        const postText = await generateAutoPostText(businessName, 'Local Business', config.topics, config.enableFestivals, config.enableReviewSpotlights);
-        const svgContent = await generateAiPosterSvg(businessName, 'Local Business', config.topics, config.enableFestivals);
+        try {
+          const postText = await generateAutoPostText(businessName, 'Local Business', config.topics, config.enableFestivals, config.enableReviewSpotlights);
+          const svgContent = await generateAiPosterSvg(businessName, 'Local Business', config.topics, config.enableFestivals);
 
-        if (!svgContent) continue;
+          if (!svgContent) continue;
 
-        const newHistoryEntry = { postText, svgContent, publishedAt: now, status: 'PENDING' };
-        config.history.push(newHistoryEntry);
-        await config.save();
-        const savedHistoryItem = config.history[config.history.length - 1];
-
-        const baseUrl = process.env.RENDER_EXTERNAL_URL || 'https://review-ai-backend-03sb.onrender.com';
-        const publicPngUrl = `${baseUrl}/api/auto-posts/banner/${savedHistoryItem._id}.png`;
-
-        const publishResult = await publishPostToGoogle(user, targetLocation.accountLocationPath, postText, publicPngUrl);
-
-        if (publishResult.success) {
-          savedHistoryItem.status = 'LIVE';
-          savedHistoryItem.imageUrl = publicPngUrl;
-          savedHistoryItem.googlePostId = publishResult.googlePostId || null;
-          config.lastPostedAt = now;
+          const newHistoryEntry = { postText, svgContent, publishedAt: now, status: 'PENDING' };
+          config.history.push(newHistoryEntry);
           await config.save();
-          console.log(`[Auto-Post Success] Successfully published post for business: ${businessName}`);
-        } else {
-          savedHistoryItem.status = 'FAILED';
-          savedHistoryItem.errorDetails = publishResult.error;
-          await config.save();
-          console.error(`[Auto-Post Failed] Failed for business: ${businessName} -`, publishResult.error);
+          const savedHistoryItem = config.history[config.history.length - 1];
+
+          const baseUrl = process.env.RENDER_EXTERNAL_URL || 'https://review-ai-backend-03sb.onrender.com';
+          const publicPngUrl = `${baseUrl}/api/auto-posts/banner/${savedHistoryItem._id}.png`;
+
+          const publishResult = await publishPostToGoogle(user, targetLocation.accountLocationPath, postText, publicPngUrl);
+
+          if (publishResult.success) {
+            savedHistoryItem.status = 'LIVE';
+            savedHistoryItem.imageUrl = publicPngUrl;
+            savedHistoryItem.googlePostId = publishResult.googlePostId || null;
+            config.lastPostedAt = now;
+            await config.save();
+            console.log(`[Auto-Post Success] Successfully published post for business: ${businessName}`);
+          } else {
+            savedHistoryItem.status = 'FAILED';
+            savedHistoryItem.errorDetails = publishResult.error;
+            await config.save();
+            console.error(`[Auto-Post Failed] Failed for business: ${businessName} -`, publishResult.error);
+          }
+        } catch (postError) {
+          console.error(`[Auto-Post Error] Processing error for business ${businessName}:`, postError.message);
         }
+
+        // Wait 3 seconds between client posts to avoid Gemini API rate limits and Sharp memory spikes
+        await sleep(3000);
       }
     }
   } catch (err) {
