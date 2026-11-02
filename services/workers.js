@@ -34,6 +34,13 @@ async function sendCriticalReviewAlert(targetEmail, locationName, reviewerName, 
   }
 }
 
+// Helper function to compare calendar days in IST
+function isSameDayIST(d1, d2) {
+  const date1Str = new Date(d1).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const date2Str = new Date(d2).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  return date1Str === date2Str;
+}
+
 // 1. Auto-Reply Worker (Every 5 mins)
 cron.schedule('*/5 * * * *', async () => {
   console.log('[Auto-Reply Worker] Running periodic check for unanswered reviews across Pro locations...');
@@ -106,7 +113,7 @@ cron.schedule('*/15 * * * *', async () => {
       const [prefHour, prefMinute] = (config.preferredTime || '10:00').split(':').map(Number);
       const prefTotalMinutes = prefHour * 60 + prefMinute;
 
-      // Catches custom times (like 2:20) in the closest 15-minute cron execution
+      // Catches scheduled time in the closest 15-minute cron window
       const diff = currentTotalMinutes - prefTotalMinutes;
       if (diff < 0 || diff >= 15) continue;
 
@@ -123,10 +130,17 @@ cron.schedule('*/15 * * * *', async () => {
       if (!config.lastPostedAt) {
         shouldPublish = true;
       } else {
-        const diffInDays = (now - new Date(config.lastPostedAt)) / (1000 * 60 * 60 * 24);
-        if (config.frequency === 'daily' && diffInDays >= 1) shouldPublish = true;
-        if (config.frequency === 'weekly' && diffInDays >= 7) shouldPublish = true;
-        if (config.frequency === 'biweekly' && diffInDays >= 14) shouldPublish = true;
+        const lastPosted = new Date(config.lastPostedAt);
+        const diffInDays = (now - lastPosted) / (1000 * 60 * 60 * 24);
+        
+        // Use calendar day comparison so daily posts trigger reliably every new day
+        if (config.frequency === 'daily' && !isSameDayIST(now, lastPosted)) {
+          shouldPublish = true;
+        } else if (config.frequency === 'weekly' && diffInDays >= 6.8) {
+          shouldPublish = true;
+        } else if (config.frequency === 'biweekly' && diffInDays >= 13.8) {
+          shouldPublish = true;
+        }
       }
 
       if (shouldPublish) {
