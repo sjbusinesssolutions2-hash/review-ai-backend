@@ -31,7 +31,7 @@ async function getValidAccessToken(user) {
   return user.accessToken;
 }
 
-async function fetchLocationReviews(userOrToken, accountName, locationName) {
+async function fetchLocationReviews(userOrToken, accountName, locationName, pageSize = null) {
   try {
     // Automatically support passing either a user object or a raw token string
     let accessToken = userOrToken;
@@ -46,7 +46,11 @@ async function fetchLocationReviews(userOrToken, accountName, locationName) {
       parentPath = `${accountName}/${locationName}`;
     }
 
-    const res = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews`, {
+    const url = pageSize
+      ? `https://mybusiness.googleapis.com/v4/${parentPath}/reviews?pageSize=${pageSize}`
+      : `https://mybusiness.googleapis.com/v4/${parentPath}/reviews`;
+
+    const res = await fetch(url, {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
