@@ -36,7 +36,7 @@ Rating: ${starRating} Stars
 Review: "${cleanComment}"
 
 Instructions:
-1. Match the exact language and script of the customer's comment (English, Roman Hindi, Roman Gujarati, etc.).
+1. Detect and reply in the exact same language and script as the customer's review comment (e.g., Russian, Arabic, French, Spanish, Roman Hindi, etc.). Default to standard English only if the comment is in English or cannot be determined.
 2. Write a calm, highly empathetic, and professional reply (1 to 2 sentences max).
 3. Sincerely acknowledge their frustration and apologize for the shortfall without being defensive.
 4. ${offlineCTA}
@@ -50,7 +50,7 @@ Rating: ${starRating} Stars
 Review: "${cleanComment}"
 
 Instructions:
-1. Match the exact language and script of the customer's comment (English, Roman Hindi, Roman Gujarati, etc.).
+1. Detect and reply in the exact same language and script as the customer's review comment (e.g., Russian, Arabic, French, Spanish, Roman Hindi, etc.). Default to standard English only if the comment is in English or cannot be determined.
 2. Write a concise, natural response (1 to 2 sentences max).
 3. Do NOT follow a fixed formula or template. Speak like a genuine person writing a unique message on the spot, referencing specific details from their review.
 4. Avoid repetitive sign-offs, quotes, or preambles.`;
