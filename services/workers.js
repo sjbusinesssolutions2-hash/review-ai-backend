@@ -8,6 +8,9 @@ const { generate2LineAIReply, generateAutoPostText, generateAiPosterSvg } = requ
 // Helper delay utility to space out heavy API calls and prevent memory spikes
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Overlap guard to prevent concurrent Auto-Reply runs under heavy multi-location load
+let isAutoReplyRunning = false;
+
 async function sendCriticalReviewAlert(targetEmail, locationName, reviewerName, starRating, comment, replyText) {
   try {
     const response = await fetch('https://api.resend.com/emails', {
@@ -46,11 +49,15 @@ function isSameDayIST(d1, d2) {
 
 // 1. Auto-Reply Worker (Every 5 mins)
 cron.schedule('*/5 * * * *', async () => {
-  console.log('[Auto-Reply Worker] Running periodic check for unanswered reviews across Pro locations...');
+  if (isAutoReplyRunning) return;
+  isAutoReplyRunning = true;
+
   try {
     const users = await User.find({
       locations: { $elemMatch: { subscriptionStatus: 'pro', autoReplyEnabled: true } }
     });
+
+    const cutoffMs = Date.now() - 48 * 60 * 60 * 1000;
 
     for (const user of users) {
       if (!user.accessToken && !user.refreshToken) continue;
@@ -65,38 +72,55 @@ cron.schedule('*/5 * * * *', async () => {
         const parentPath = loc.accountLocationPath;
         if (!parentPath) continue;
 
-        console.log(`[Auto-Reply] Processing reviews for business: ${loc.locationName || parentPath}`);
-        const reviewData = await fetchLocationReviews(user, '', parentPath);
-        const unreplied = (reviewData.reviews || []).filter(r => !r.reviewReply);
+        const reviewData = await fetchLocationReviews(user, '', parentPath, 10);
+        const unreplied = (reviewData.reviews || []).filter(r => {
+          if (r.reviewReply) return false;
+          if (!r.createTime) return false;
+          return new Date(r.createTime).getTime() >= cutoffMs;
+        });
 
-        for (const review of unreplied) {
-          const reviewerName = review.reviewer?.displayName || 'Customer';
-          const starVal = review.starRating === 'FIVE' ? 5 : review.starRating === 'FOUR' ? 4 : review.starRating === 'THREE' ? 3 : review.starRating === 'TWO' ? 2 : 1;
-          
-          const replyText = await generate2LineAIReply(loc.locationName, reviewerName, starVal, review.comment || '', supportEmail, supportPhone);
+        if (unreplied.length === 0) continue;
 
-          if (replyText) {
-            const validToken = await getValidAccessToken(user);
-            const googleRes = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews/${review.reviewId}/reply`, {
-              method: 'PUT',
-              headers: { 'Authorization': `Bearer ${validToken}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ comment: replyText })
-            });
+        console.log(`[Auto-Reply] Found ${unreplied.length} unreplied review(s) for Pro location: ${loc.locationName || parentPath}`);
 
-            if (googleRes.ok) {
-              console.log(`[Auto-Reply Success] Replied to review for business: ${loc.locationName || parentPath}`);
-              if (starVal <= 3 && isCriticalEmailEnabled && user.email) {
-                await sendCriticalReviewAlert(user.email, loc.locationName, reviewerName, starVal, review.comment || '', replyText);
+        const batch = unreplied.slice(0, 4);
+        const validToken = await getValidAccessToken(user);
+
+        for (const review of batch) {
+          try {
+            const reviewerName = review.reviewer?.displayName || 'Customer';
+            const starVal = review.starRating === 'FIVE' ? 5 : review.starRating === 'FOUR' ? 4 : review.starRating === 'THREE' ? 3 : review.starRating === 'TWO' ? 2 : 1;
+            
+            const replyText = await generate2LineAIReply(loc.locationName, reviewerName, starVal, review.comment || '', supportEmail, supportPhone);
+
+            if (replyText) {
+              const googleRes = await fetch(`https://mybusiness.googleapis.com/v4/${parentPath}/reviews/${review.reviewId}/reply`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${validToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ comment: replyText })
+              });
+
+              if (googleRes.ok) {
+                console.log(`[Auto-Reply Success] Replied to review for business: ${loc.locationName || parentPath}`);
+                if (starVal <= 3 && isCriticalEmailEnabled && user.email) {
+                  await sendCriticalReviewAlert(user.email, loc.locationName, reviewerName, starVal, review.comment || '', replyText);
+                }
+              } else {
+                console.error(`[Auto-Reply Failed] Could not reply for business: ${loc.locationName || parentPath}`);
               }
-            } else {
-              console.error(`[Auto-Reply Failed] Could not reply for business: ${loc.locationName || parentPath}`);
             }
+          } catch (reviewErr) {
+            console.error(`[Auto-Reply Error] Failed processing review for ${loc.locationName || parentPath}:`, reviewErr.message);
           }
+
+          await sleep(3000);
         }
       }
     }
   } catch (err) {
     console.error('[Auto-Reply Worker Error]:', err.message);
+  } finally {
+    isAutoReplyRunning = false;
   }
 });
 
