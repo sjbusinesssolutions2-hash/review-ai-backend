@@ -24,9 +24,18 @@ router.get('/google/callback',
       const oauth2Client = new google.auth.OAuth2();
       oauth2Client.setCredentials({ access_token: user.accessToken });
 
-      const mybusinessaccountmanagement = google.mybusinessaccountmanagement({ version: 'v1', auth: oauth2Client });
-      const accountsRes = await mybusinessaccountmanagement.accounts.list();
-      const accounts = accountsRes.data.accounts || [];
+      let accounts = [];
+      try {
+        const mybusinessaccountmanagement = google.mybusinessaccountmanagement({ version: 'v1', auth: oauth2Client });
+        const accountsRes = await mybusinessaccountmanagement.accounts.list();
+        accounts = accountsRes.data.accounts || [];
+      } catch (accErr) {
+        if (accErr.code === 403 || accErr.status === 403) {
+          console.warn(`[OAuth] No Business Profile access or permission declined for ${user.email || user._id}. Continuing with 0 locations.`);
+        } else {
+          throw accErr;
+        }
+      }
 
       for (const acc of accounts) {
         try {
