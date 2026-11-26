@@ -143,7 +143,7 @@ cron.schedule('*/5 * * * *', async () => {
 });
 
 // 2. Auto-Post Worker (Every 15 mins: :00, :15, :30, :45)
-cron.schedule('*/15 * * * *', async () => {
+cron.schedule('*/5 * * * *', async () => {
   if (isAutoPostRunning) return;
   isAutoPostRunning = true;
 
