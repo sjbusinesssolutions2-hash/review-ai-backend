@@ -1,17 +1,94 @@
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isTransientStatus(status) {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function isTransientError(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  return (
+    msg.includes('503') ||
+    msg.includes('429') ||
+    msg.includes('500') ||
+    msg.includes('502') ||
+    msg.includes('504') ||
+    msg.includes('unavailable') ||
+    msg.includes('high demand') ||
+    msg.includes('overloaded') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('timeout') ||
+    msg.includes('aborted') ||
+    msg.includes('fetch failed') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('network')
+  );
+}
+
+// Fetch wrapper with retry + exponential backoff + jitter for transient HTTP/network failures
+async function fetchWithBackoff(url, options = {}, label = 'GBP API', maxRetries = 2) {
+  let attempt = 0;
+
+  while (true) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || 15000);
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (!isTransientStatus(response.status) || attempt >= maxRetries) {
+        return response;
+      }
+
+      attempt += 1;
+      const baseDelay = Math.min(8000, 1200 * Math.pow(2, attempt - 1));
+      const jitter = Math.floor(Math.random() * 600);
+      const waitMs = baseDelay + jitter;
+
+      console.log(`[${label}] HTTP ${response.status} (retry ${attempt}/${maxRetries}), waiting ${waitMs}ms...`);
+      await sleep(waitMs);
+    } catch (err) {
+      clearTimeout(timeoutId);
+
+      if (!isTransientError(err) || attempt >= maxRetries) {
+        throw err;
+      }
+
+      attempt += 1;
+      const baseDelay = Math.min(8000, 1200 * Math.pow(2, attempt - 1));
+      const jitter = Math.floor(Math.random() * 600);
+      const waitMs = baseDelay + jitter;
+
+      console.log(`[${label}] Transient error (${err.message}) on retry ${attempt}/${maxRetries}, waiting ${waitMs}ms...`);
+      await sleep(waitMs);
+    }
+  }
+}
+
 async function getValidAccessToken(user) {
   if (!user || !user.refreshToken) return user?.accessToken;
 
   try {
-    const response = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: process.env.GOOGLE_CLIENT_ID,
-        client_secret: process.env.GOOGLE_CLIENT_SECRET,
-        refresh_token: user.refreshToken,
-        grant_type: 'refresh_token'
-      })
-    });
+    const response = await fetchWithBackoff(
+      'https://oauth2.googleapis.com/token',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: process.env.GOOGLE_CLIENT_ID,
+          client_secret: process.env.GOOGLE_CLIENT_SECRET,
+          refresh_token: user.refreshToken,
+          grant_type: 'refresh_token'
+        }),
+        timeoutMs: 10000
+      },
+      'OAuth Token',
+      2
+    );
 
     if (response.ok) {
       const data = await response.json();
@@ -33,11 +110,8 @@ async function getValidAccessToken(user) {
 
 async function fetchLocationReviews(userOrToken, accountName, locationName, pageSize = null) {
   try {
-    // Automatically support passing either a user object or a raw token string
-    let accessToken = userOrToken;
-    if (typeof userOrToken === 'object' && userOrToken !== null) {
-      accessToken = await getValidAccessToken(userOrToken);
-    }
+    const isUserObj = typeof userOrToken === 'object' && userOrToken !== null;
+    let accessToken = isUserObj ? await getValidAccessToken(userOrToken) : userOrToken;
 
     let parentPath = locationName;
     if (locationName.startsWith('accounts/')) {
@@ -50,12 +124,35 @@ async function fetchLocationReviews(userOrToken, accountName, locationName, page
       ? `https://mybusiness.googleapis.com/v4/${parentPath}/reviews?pageSize=${pageSize}`
       : `https://mybusiness.googleapis.com/v4/${parentPath}/reviews`;
 
-    const res = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      }
-    });
+    let res = await fetchWithBackoff(
+      url,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        timeoutMs: 15000
+      },
+      'GBP Reviews',
+      2
+    );
+
+    // If token expired mid-session, refresh once and retry
+    if (res.status === 401 && isUserObj && userOrToken.refreshToken) {
+      accessToken = await getValidAccessToken(userOrToken);
+      res = await fetchWithBackoff(
+        url,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          timeoutMs: 15000
+        },
+        'GBP Reviews Retry',
+        1
+      );
+    }
 
     if (res.ok) {
       const data = await res.json();
@@ -65,7 +162,16 @@ async function fetchLocationReviews(userOrToken, accountName, locationName, page
 
       if (reviews.length > 0 && !data.averageRating) {
         const totalStars = reviews.reduce((acc, r) => {
-          const val = r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : r.starRating === 'THREE' ? 3 : r.starRating === 'TWO' ? 2 : 1;
+          const val =
+            r.starRating === 'FIVE'
+              ? 5
+              : r.starRating === 'FOUR'
+              ? 4
+              : r.starRating === 'THREE'
+              ? 3
+              : r.starRating === 'TWO'
+              ? 2
+              : 1;
           return acc + val;
         }, 0);
         rating = totalStars / reviews.length;
@@ -89,10 +195,8 @@ async function fetchLocationReviews(userOrToken, accountName, locationName, page
 
 async function publishPostToGoogle(userOrToken, accountLocationPath, summary, publicImageUrl) {
   try {
-    let accessToken = userOrToken;
-    if (typeof userOrToken === 'object' && userOrToken !== null) {
-      accessToken = await getValidAccessToken(userOrToken);
-    }
+    const isUserObj = typeof userOrToken === 'object' && userOrToken !== null;
+    let accessToken = isUserObj ? await getValidAccessToken(userOrToken) : userOrToken;
 
     const endpoint = `https://mybusiness.googleapis.com/v4/${accountLocationPath}/localPosts`;
 
@@ -107,20 +211,42 @@ async function publishPostToGoogle(userOrToken, accountLocationPath, summary, pu
     };
 
     if (publicImageUrl) {
-      postPayload.media = [{
-        mediaFormat: 'PHOTO',
-        sourceUrl: publicImageUrl
-      }];
+      postPayload.media = [
+        {
+          mediaFormat: 'PHOTO',
+          sourceUrl: publicImageUrl
+        }
+      ];
     }
 
-    const res = await fetch(endpoint, {
+    const requestInit = {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(postPayload)
-    });
+      body: JSON.stringify(postPayload),
+      timeoutMs: 20000
+    };
+
+    let res = await fetchWithBackoff(endpoint, requestInit, 'GBP Publish Post', 2);
+
+    // If token expired mid-session, refresh once and retry
+    if (res.status === 401 && isUserObj && userOrToken.refreshToken) {
+      accessToken = await getValidAccessToken(userOrToken);
+      res = await fetchWithBackoff(
+        endpoint,
+        {
+          ...requestInit,
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          }
+        },
+        'GBP Publish Post Retry',
+        1
+      );
+    }
 
     if (res.ok) {
       const data = await res.json();
