@@ -50,7 +50,7 @@ function extractResponseText(response) {
 }
 
 // Helper that runs a Gemini call with retry + exponential backoff + jitter
-async function callGeminiWithBackoff(aiClient, model, prompt, timeoutMs = 15000, maxRetries = 2) {
+async function callGeminiWithBackoff(aiClient, model, prompt, timeoutMs = 15000, maxRetries = 1) {
   let attempt = 0;
 
   while (true) {
@@ -73,12 +73,12 @@ async function callGeminiWithBackoff(aiClient, model, prompt, timeoutMs = 15000,
       }
 
       attempt += 1;
-      const baseDelay = Math.min(8000, 1000 * Math.pow(2, attempt - 1));
-      const jitter = Math.floor(Math.random() * 600);
+      const baseDelay = Math.min(6000, 1200 * Math.pow(2, attempt - 1));
+      const jitter = Math.floor(Math.random() * 500);
       const waitMs = baseDelay + jitter;
 
-      console.warn(
-        `[Gemini AI] Transient error on ${model} (attempt ${attempt}/${maxRetries}): ${err.message}. Retrying in ${waitMs}ms...`
+      console.log(
+        `[Gemini AI] Busy on ${model} (retry ${attempt}/${maxRetries}), waiting ${waitMs}ms...`
       );
       await sleep(waitMs);
     }
@@ -138,7 +138,7 @@ Instructions:
 
     for (const model of MODELS_TO_TRY) {
       try {
-        const responseText = await callGeminiWithBackoff(aiClient, model, prompt, 10000, 2);
+        const responseText = await callGeminiWithBackoff(aiClient, model, prompt, 10000, 1);
 
         if (responseText && responseText.trim().length > 0) {
           const cleanText = responseText.trim().replace(/^["']|["']$/g, '');
@@ -152,7 +152,7 @@ Instructions:
           return cleanText;
         }
       } catch (err) {
-        console.warn(`[Gemini AI - Reply] Key ${k + 1} with model ${model} failed: ${err.message}. Trying next...`);
+        console.log(`[Gemini AI - Reply] Key ${k + 1} (${model}) skipped: ${err.message}`);
       }
     }
   }
@@ -207,14 +207,14 @@ Requirements:
 
     for (const model of MODELS_TO_TRY) {
       try {
-        const responseText = await callGeminiWithBackoff(aiClient, model, prompt, 10000, 2);
+        const responseText = await callGeminiWithBackoff(aiClient, model, prompt, 10000, 1);
 
         if (responseText && responseText.trim().length > 0) {
           return responseText.trim().replace(/^["']|["']$/g, '');
         }
       } catch (err) {
         lastError = err.message;
-        console.warn(`[Gemini AI - Post Text] Key ${k + 1} with model ${model} failed: ${err.message}. Trying next...`);
+        console.log(`[Gemini AI - Post Text] Key ${k + 1} (${model}) skipped: ${err.message}`);
       }
     }
   }
@@ -222,7 +222,7 @@ Requirements:
   throw new Error(`AI Post text generation failed across all keys and models (${lastError}).`);
 }
 
-// Dynamic SVG Poster Generator (Varied Layouts & Styles + Backoff + Multi-Key/Multi-Model)
+// Dynamic Realistic SVG Poster Generator (5-Part Visual Formula + Minimal Text)
 async function generateAiPosterSvg(locationName, category, topics, enableFestivals) {
   if (!geminiKeys || geminiKeys.length === 0) {
     throw new Error('No valid Gemini API keys configured.');
@@ -235,84 +235,60 @@ async function generateAiPosterSvg(locationName, category, topics, enableFestiva
   const now = new Date();
   const currentDate = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
-  const festivalInstruction = enableFestivals
-    ? `SEASONAL & EVENT ACCENT ACTIVE (Date: ${currentDate}): Add subtle visual accents matching the current weather/season or non-religious national occasion. Strictly NO religious symbols.`
-    : 'Clean, timeless brand artwork.';
+  const festivalContext = enableFestivals
+    ? `Weave subtle seasonal/weather atmosphere or secular occasion mood for ${currentDate} into the lighting and environment (strictly NO religious symbols).`
+    : 'Natural, timeless studio or workshop atmosphere.';
 
-  const palettes = [
-    { name: 'Vintage Cream & Terracotta', bg: '#faf8f5', surface: '#f2eae1', text: '#1c1917', accent: '#ea580c', muted: '#57534e' },
-    { name: 'Deep Forest & Warm Gold', bg: '#062c1e', surface: '#0d3d2b', text: '#f8fafc', accent: '#fbbf24', muted: '#a7f3d0' },
-    { name: 'Midnight Navy & Electric Cyan', bg: '#0f172a', surface: '#1e293b', text: '#f8fafc', accent: '#38bdf8', muted: '#94a3b8' },
-    { name: 'Warm Saffron & Espresso', bg: '#fffbeb', surface: '#fef3c7', text: '#451a03', accent: '#d97706', muted: '#78350f' },
-    { name: 'Rich Crimson & Ivory', bg: '#fff1f2', surface: '#ffe4e6', text: '#4c0519', accent: '#e11d48', muted: '#881337' },
-    { name: 'Charcoal Slate & Lime', bg: '#18181b', surface: '#27272a', text: '#fafafa', accent: '#a3e635', muted: '#a1a1aa' },
-    { name: 'Royal Indigo & Soft Lavender', bg: '#eef2ff', surface: '#e0e7ff', text: '#1e1b4b', accent: '#4f46e5', muted: '#4338ca' },
-    { name: 'Terracotta Clay & Sand', bg: '#fdf8f6', surface: '#faedcd', text: '#381d05', accent: '#bc6c25', muted: '#6c584c' },
-    { name: 'Emerald & Crisp White', bg: '#ecfdf5', surface: '#d1fae5', text: '#022c22', accent: '#059669', muted: '#065f46' },
-    { name: 'Bold Cobalt & Tangerine', bg: '#172554', surface: '#1e3a8a', text: '#ffffff', accent: '#fb923c', muted: '#bfdbfe' }
+  // Varied camera/composition angles so no two days share the same framing
+  const cameraCompositions = [
+    'Cinematic close-up macro hero shot with shallow depth-of-field background layering and clean lower-third negative space for minimal title',
+    'Dramatic three-quarter angled perspective across a workbench/environment with expansive atmospheric background and clean top-left sky/wall space',
+    'Low-angle heroic silhouette and rim-lit centerpiece rising toward warm horizon light with clean bottom caption band',
+    'Wide editorial environmental scene with foreground framing elements, mid-ground focal subject in action, and soft atmospheric depth',
+    'Overhead flat-lay studio composition with soft directional side shadows, natural surfaces, and clean centered or edge-aligned typography',
+    'Minimalist gallery-style centerpiece floating in rich gradient atmosphere with subtle architectural framing and generous breathing room'
   ];
 
-  const layoutBlueprints = [
-    {
-      name: 'Bold Full-Bleed Editorial Poster',
-      rules: 'Oversized expressive display typography across the upper canvas, clean architectural divider lines, and a large bespoke vector illustration anchored in the bottom-right or center-bottom. DO NOT use a 2-column card split or 4-box feature grid.'
-    },
-    {
-      name: 'Diagonal Dynamic Split',
-      rules: 'Use a bold diagonal polygon backdrop splitting the 1200x900 canvas into two contrasting color zones. Place crisp, concise headline typography on one side and a large, detailed vector illustration of the craft/product on the other. NO mini-card grids.'
-    },
-    {
-      name: 'Centered Heritage Emblem & Frame',
-      rules: 'Classic vintage poster composition with an ornate double-line border, a bold central circular or shield emblem containing custom vector artwork relevant to the business, curved or stacked bold title above, and a clean bottom ribbon banner.'
-    },
-    {
-      name: 'Minimalist Swiss Grid Typography',
-      rules: 'Ultra-clean Swiss modernist poster style: huge bold headline on the left/top, generous negative space, geometric accent shapes, and one crisp minimalist vector illustration. Maximum 3 text blocks total—NO tiny boxes or bullet cards.'
-    },
-    {
-      name: 'Top Panoramic Illustration + Bold Bottom Strip',
-      rules: 'Top 62% of the canvas is an expansive, rich panoramic vector scene illustrating the workshop/service in action. Bottom 38% is a solid high-contrast band featuring the business name, a punchy 3-5 word headline, and a simple walk-in callout.'
-    },
-    {
-      name: 'Magazine Cover Spotlight',
-      rules: 'Styled like a modern trade magazine cover: bold masthead title at the very top, a centerpiece hero illustration filling the middle of the canvas, and one bold editorial headline overlay at the bottom.'
-    },
-    {
-      name: 'Circular Spotlight & Floating Badges',
-      rules: 'A large glowing or solid geometric circle off-center housing a detailed vector illustration, balanced by clean stacked typography on the opposite side and 1-2 floating pill tags. NO 2x2 rectangular grids.'
-    },
-    {
-      name: 'Dark Mode Neon / High-Contrast Showcase',
-      rules: 'Rich dark background with glowing accent strokes, blueprint/technical line-art accents, bold high-contrast headline, and a sleek vector centerpiece.'
-    }
+  // Varied lighting & mood palettes
+  const lightingMoods = [
+    'Golden hour warm rim lighting, soft amber sunbeams, deep warm shadows, rich atmospheric depth',
+    'Crisp morning daylight, cool sky highlights, soft diffused studio bounce light, clean natural contrast',
+    'Moody dramatic workshop spotlight, warm tungsten key light against deep indigo/charcoal ambient shadows',
+    'Soft overcast natural window light, gentle tonal gradations, muted earthy warmth, calm editorial clarity',
+    'Vibrant late-afternoon sunlight casting long diagonal shadows, warm terracotta and cream highlights',
+    'Twilight deep-blue ambient glow contrasted with warm golden edge highlights and subtle atmospheric mist'
   ];
 
-  const selectedPalette = palettes[Math.floor(Math.random() * palettes.length)];
-  const selectedLayout = layoutBlueprints[Math.floor(Math.random() * layoutBlueprints.length)];
+  const chosenCamera = cameraCompositions[Math.floor(Math.random() * cameraCompositions.length)];
+  const chosenLighting = lightingMoods[Math.floor(Math.random() * lightingMoods.length)];
 
-  const prompt = `You are an award-winning graphic designer creating a completely unique 1200x900 landscape vector poster SVG for "${bName}" (Business Category: ${bCat}).
-Focus Topic: "${rawTopic}".
-${festivalInstruction}
+  const prompt = `You are a master vector illustrator and art director creating a realistic, museum-grade 1200x900 SVG artwork for "${bName}" (Category: ${bCat}, Focus: "${rawTopic}").
 
-MANDATORY VISUAL DIRECTION (FOLLOW THIS EXACT STYLE):
-- Composition Archetype: "${selectedLayout.name}"
-- Layout Instructions: ${selectedLayout.rules}
-- NEVER repeat a generic 2-column dashboard with 4 small service cards. NEVER use the generic phrase "Expert Local Business" as the main headline—instead invent a punchy, authentic 2 to 5 word headline tailored specifically to "${bCat}" and "${rawTopic}".
+Build the artwork using this exact 5-part Prompt Formula:
+[Subject & Action] + [Realistic Shading & Lighting] + [Texture & Material Detail] + [Composition & Camera/Angle] + [SVG / Vector Specs]
 
-COLOR PALETTE:
-- Theme: "${selectedPalette.name}"
-- Canvas Background: ${selectedPalette.bg}
-- Secondary Surface/Shape Fill: ${selectedPalette.surface}
-- Primary Text Color: ${selectedPalette.text}
-- Accent / Highlight Color: ${selectedPalette.accent}
-- Muted / Subtitle Color: ${selectedPalette.muted}
+Reference Example of the Visual Quality & Style Expected:
+"Snow-capped mountain peak above a misty pine forest at golden hour, rich atmospheric depth, warm rim lighting, layered gradient shading, subtle grain texture, clean vector paths, sharp contours, scalable SVG graphic."
 
-CRITICAL TECHNICAL & TYPOGRAPHY RULES:
-1. Return ONLY valid raw SVG code (<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">...</svg>) with ZERO markdown backticks, XML headers, or explanations.
-2. Edge-to-edge background: Start with <rect width="1200" height="900" fill="${selectedPalette.bg}"/>.
-3. Zero text clipping or overflow: Keep every <text> line short, well inside margins (x between 60 and 1140), and properly sized so no word is ever cut off at the edge of a box or canvas.
-4. Spelling & XML safety: Double-check every word for flawless English spelling. Escape any "&" as "&amp;". Ensure every tag is properly closed and has zero duplicate attributes.
-5. Restrictions: NO religious symbols or themes. NO fake customer reviews or star ratings. Keep messaging authentic ("Walk-Ins Welcome • Direct Service").`;
+APPLY THE 5-PART FORMULA TO THIS SCENE:
+1. [Subject & Action]: Depict a vivid, authentic subject or scene in action representing "${bName}" (${bCat} — ${rawTopic}). ${festivalContext}
+2. [Realistic Shading & Lighting]: ${chosenLighting}. Use multi-stop <linearGradient> and <radialGradient> definitions, soft cast shadows, rim highlights, and layered atmospheric depth—NOT flat solid clipart.
+3. [Texture & Material Detail]: Render realistic material surfaces (wood grain, brushed metal, woven fabric, leather, stone, mist, glass reflections, or natural foliage) using layered vector paths, fine contour lines, and subtle SVG <filter> noise/grain texture where appropriate.
+4. [Composition & Camera/Angle]: ${chosenCamera}.
+5. [SVG / Vector Specs]: Clean vector paths, sharp contours, layered depth groups (<g>), scalable 1200x900 SVG graphic.
+
+STRICT MINIMAL-TEXT RULE (VERY IMPORTANT):
+- Let the realistic illustration occupy 80%+ of the visual focus.
+- Include AT MOST TWO tiny, ultra-clean text elements in the entire SVG:
+  1) Business Name: "${bName}" (clean, crisp typography placed in a clear negative-space area)
+  2) One short 2-to-4 word tagline or topic title (e.g. "${rawTopic.split(',')[0].trim().slice(0, 28)}")
+- DO NOT include paragraphs, bullet points, 2x2 grids, feature boxes, phone numbers, badges, star ratings, or "Walk-Ins Welcome" clutter. Keep the artwork pure and uncluttered.
+
+TECHNICAL & XML SAFETY RULES:
+1. Return ONLY raw valid SVG code starting with <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900"> and ending with </svg>. No markdown backticks, XML declarations, or commentary.
+2. Edge-to-edge background: First element inside <svg> must be a full-canvas <rect width="1200" height="900" .../> so there are zero transparent gaps.
+3. Zero text clipping: Keep text inside x=70..1130 and y=80..840 with well-proportioned font sizes so nothing is ever cut off.
+4. XML validity: Escape any "&" as "&amp;", close all tags properly, and never duplicate attributes.`;
 
   let lastError = 'Unknown error';
 
@@ -321,7 +297,7 @@ CRITICAL TECHNICAL & TYPOGRAPHY RULES:
 
     for (const model of MODELS_TO_TRY) {
       try {
-        let rawText = await callGeminiWithBackoff(aiClient, model, prompt, 18000, 2);
+        let rawText = await callGeminiWithBackoff(aiClient, model, prompt, 20000, 1);
         rawText = rawText.replace(/```(?:xml|svg|html)?/gi, '').replace(/```/g, '').trim();
 
         const svgMatch = rawText.match(/<svg[\s\S]*?<\/svg>/i);
@@ -339,11 +315,11 @@ CRITICAL TECHNICAL & TYPOGRAPHY RULES:
           return svg;
         } else {
           lastError = `Model ${model} returned non-SVG output`;
-          console.warn(`[Gemini AI - SVG] Key ${k + 1} (${model}) returned invalid SVG snippet: ${rawText.substring(0, 120)}`);
+          console.log(`[Gemini AI - SVG] Key ${k + 1} (${model}) returned non-SVG output, trying next...`);
         }
       } catch (err) {
         lastError = err.message;
-        console.warn(`[Gemini AI - SVG] Key ${k + 1} with model ${model} failed: ${err.message}. Trying next...`);
+        console.log(`[Gemini AI - SVG] Key ${k + 1} (${model}) skipped: ${err.message}`);
       }
     }
   }
