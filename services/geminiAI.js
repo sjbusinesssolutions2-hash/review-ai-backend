@@ -6,6 +6,37 @@ const geminiKeys = rawKeysInput
   .map(k => k.trim())
   .filter(k => k.startsWith('AQ.'));
 
+const MODELS_TO_TRY = [
+  'gemini-3.5-flash-lite',
+  'gemini-3.5-flash',
+  'gemini-3.6-flash',
+  'gemini-3.8-flash',
+  'gemini-4-hydrogen'
+];
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isTransientError(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  return (
+    msg.includes('503') ||
+    msg.includes('429') ||
+    msg.includes('500') ||
+    msg.includes('502') ||
+    msg.includes('504') ||
+    msg.includes('unavailable') ||
+    msg.includes('high demand') ||
+    msg.includes('overloaded') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('timeout') ||
+    msg.includes('aborted') ||
+    msg.includes('fetch failed') ||
+    msg.includes('network')
+  );
+}
+
 // Helper to safely extract response text across @google/genai response shapes
 function extractResponseText(response) {
   if (!response) return '';
@@ -16,6 +47,42 @@ function extractResponseText(response) {
     return response.candidates[0].content.parts.map(p => p.text || '').join('');
   }
   return '';
+}
+
+// Helper that runs a Gemini call with retry + exponential backoff + jitter
+async function callGeminiWithBackoff(aiClient, model, prompt, timeoutMs = 15000, maxRetries = 2) {
+  let attempt = 0;
+
+  while (true) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await aiClient.models.generateContent({
+        model: model,
+        contents: prompt,
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      return extractResponseText(response);
+    } catch (err) {
+      clearTimeout(timeoutId);
+
+      if (!isTransientError(err) || attempt >= maxRetries) {
+        throw err;
+      }
+
+      attempt += 1;
+      const baseDelay = Math.min(8000, 1000 * Math.pow(2, attempt - 1));
+      const jitter = Math.floor(Math.random() * 600);
+      const waitMs = baseDelay + jitter;
+
+      console.warn(
+        `[Gemini AI] Transient error on ${model} (attempt ${attempt}/${maxRetries}): ${err.message}. Retrying in ${waitMs}ms...`
+      );
+      await sleep(waitMs);
+    }
+  }
 }
 
 // Sequential Key & Model Failover Engine for Review Replies (Handles 1-3 Star Escalations & Standard Replies)
@@ -31,13 +98,12 @@ async function generate2LineAIReply(businessName, reviewerName, starRating, comm
   let prompt = '';
 
   if (starRating <= 3) {
-    // Critical Review Prompt (1 to 3 Stars)
     const contactInfo = [
       supportEmail ? `email (${supportEmail})` : '',
       supportPhone ? `phone (${supportPhone})` : ''
     ].filter(Boolean).join(' or ');
 
-    const offlineCTA = contactInfo 
+    const offlineCTA = contactInfo
       ? `Invites them to resolve the issue directly offline by reaching out to our support team via ${contactInfo}.`
       : 'Invites them to reach out directly so we can make things right.';
 
@@ -54,7 +120,6 @@ Instructions:
 4. ${offlineCTA}
 5. Do NOT follow a fixed formula or preambles.`;
   } else {
-    // Standard 4-5 Star Review Prompt
     prompt = `You are replying to a Google Business review for "${businessName}" as a business owner.
 
 Reviewer: ${cleanName}
@@ -68,30 +133,17 @@ Instructions:
 4. Avoid repetitive sign-offs, quotes, or preambles.`;
   }
 
-  const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.6-flash'];
-
   for (let k = 0; k < geminiKeys.length; k++) {
-    const key = geminiKeys[k];
-    const aiClient = new GoogleGenAI({ apiKey: key });
+    const aiClient = new GoogleGenAI({ apiKey: geminiKeys[k] });
 
-    for (const model of modelsToTry) {
+    for (const model of MODELS_TO_TRY) {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-        const response = await aiClient.models.generateContent({
-          model: model,
-          contents: prompt,
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-
-        const responseText = extractResponseText(response);
+        const responseText = await callGeminiWithBackoff(aiClient, model, prompt, 10000, 2);
 
         if (responseText && responseText.trim().length > 0) {
-          let cleanText = responseText.trim().replace(/^["']|["']$/g, '');
+          const cleanText = responseText.trim().replace(/^["']|["']$/g, '');
           const sentences = cleanText.match(/[^.!?]+[.!?]+/g);
-          
+
           if (sentences && sentences.length >= 2) {
             return `${sentences[0].trim()} ${sentences[1].trim()}`;
           } else if (sentences && sentences.length === 1) {
@@ -117,19 +169,19 @@ async function generateAutoPostText(locationName, category, topics, enableFestiv
 
   const now = new Date();
   const currentDate = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  
-  let festivalContext = "Disabled";
+
+  let festivalContext = 'Disabled';
   if (enableFestivals) {
     festivalContext = `ENABLED for today (${currentDate}). If there is a major SECULAR or NATIONAL non-religious day today (like Republic Day, Independence Day, Earth Day, New Year), or a relevant local weather/seasonal vibe (like summer care, monsoon prep, winter comfort), weave it in naturally. Strictly EXCLUDE all religious festivals or symbols.`;
   }
 
   const copyAngles = [
-    "Behind-the-scenes craftsmanship & attention to detail in our daily work",
-    "Practical pro-tip or maintenance advice every customer should know",
-    "Seasonal / weather readiness check for best performance",
-    "Quick spotlight on one specific specialty service we take pride in",
-    "Warm invitation to drop by the shop for an honest checkup or consultation",
-    "Celebrating quality materials, precision tools, and lasting durability"
+    'Behind-the-scenes craftsmanship & attention to detail in our daily work',
+    'Practical pro-tip or maintenance advice every customer should know',
+    'Seasonal / weather readiness check for best performance',
+    'Quick spotlight on one specific specialty service we take pride in',
+    'Warm invitation to drop by the shop for an honest checkup or consultation',
+    'Celebrating quality materials, precision tools, and lasting durability'
   ];
   const chosenAngle = copyAngles[Math.floor(Math.random() * copyAngles.length)];
 
@@ -148,39 +200,29 @@ Requirements:
 4. Include 1 clear call-to-action (walk-ins or phone calls only, NO online booking) and 2 relevant hashtags.
 5. Output ONLY the final post text, no labels or quotes.`;
 
-  const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.6-flash'];
+  let lastError = 'Unknown error';
 
   for (let k = 0; k < geminiKeys.length; k++) {
-    const key = geminiKeys[k];
-    const aiClient = new GoogleGenAI({ apiKey: key });
+    const aiClient = new GoogleGenAI({ apiKey: geminiKeys[k] });
 
-    for (const model of modelsToTry) {
+    for (const model of MODELS_TO_TRY) {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-        const response = await aiClient.models.generateContent({
-          model: model,
-          contents: prompt,
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-
-        const responseText = extractResponseText(response);
+        const responseText = await callGeminiWithBackoff(aiClient, model, prompt, 10000, 2);
 
         if (responseText && responseText.trim().length > 0) {
           return responseText.trim().replace(/^["']|["']$/g, '');
         }
       } catch (err) {
+        lastError = err.message;
         console.warn(`[Gemini AI - Post Text] Key ${k + 1} with model ${model} failed: ${err.message}. Trying next...`);
       }
     }
   }
 
-  throw new Error('AI Post text generation failed across all keys and models.');
+  throw new Error(`AI Post text generation failed across all keys and models (${lastError}).`);
 }
 
-// Dynamic SVG Poster Generator (10 Distinct Layouts & Styles — Zero Repeating Brochure Grid)
+// Dynamic SVG Poster Generator (Varied Layouts & Styles + Backoff + Multi-Key/Multi-Model)
 async function generateAiPosterSvg(locationName, category, topics, enableFestivals) {
   if (!geminiKeys || geminiKeys.length === 0) {
     throw new Error('No valid Gemini API keys configured.');
@@ -193,55 +235,55 @@ async function generateAiPosterSvg(locationName, category, topics, enableFestiva
   const now = new Date();
   const currentDate = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
-  const festivalInstruction = enableFestivals 
-    ? `SEASONAL & EVENT ACCENT ACTIVE (Date: ${currentDate}): Add subtle visual accents matching the current weather/season or non-religious national occasion. Strictly NO religious symbols.` 
-    : `Clean, timeless brand artwork.`;
+  const festivalInstruction = enableFestivals
+    ? `SEASONAL & EVENT ACCENT ACTIVE (Date: ${currentDate}): Add subtle visual accents matching the current weather/season or non-religious national occasion. Strictly NO religious symbols.`
+    : 'Clean, timeless brand artwork.';
 
   const palettes = [
-    { name: "Vintage Cream & Terracotta", bg: "#faf8f5", surface: "#f2eae1", text: "#1c1917", accent: "#ea580c", muted: "#57534e" },
-    { name: "Deep Forest & Warm Gold", bg: "#062c1e", surface: "#0d3d2b", text: "#f8fafc", accent: "#fbbf24", muted: "#a7f3d0" },
-    { name: "Midnight Navy & Electric Cyan", bg: "#0f172a", surface: "#1e293b", text: "#f8fafc", accent: "#38bdf8", muted: "#94a3b8" },
-    { name: "Warm Saffron & Espresso", bg: "#fffbeb", surface: "#fef3c7", text: "#451a03", accent: "#d97706", muted: "#78350f" },
-    { name: "Rich Crimson & Ivory", bg: "#fff1f2", surface: "#ffe4e6", text: "#4c0519", accent: "#e11d48", muted: "#881337" },
-    { name: "Charcoal Slate & Lime", bg: "#18181b", surface: "#27272a", text: "#fafafa", accent: "#a3e635", muted: "#a1a1aa" },
-    { name: "Royal Indigo & Soft Lavender", bg: "#eef2ff", surface: "#e0e7ff", text: "#1e1b4b", accent: "#4f46e5", muted: "#4338ca" },
-    { name: "Terracotta Clay & Sand", bg: "#fdf8f6", surface: "#faedcd", text: "#381d05", accent: "#bc6c25", muted: "#6c584c" },
-    { name: "Emerald & Crisp White", bg: "#ecfdf5", surface: "#d1fae5", text: "#022c22", accent: "#059669", muted: "#065f46" },
-    { name: "Bold Cobalt & Tangerine", bg: "#172554", surface: "#1e3a8a", text: "#ffffff", accent: "#fb923c", muted: "#bfdbfe" }
+    { name: 'Vintage Cream & Terracotta', bg: '#faf8f5', surface: '#f2eae1', text: '#1c1917', accent: '#ea580c', muted: '#57534e' },
+    { name: 'Deep Forest & Warm Gold', bg: '#062c1e', surface: '#0d3d2b', text: '#f8fafc', accent: '#fbbf24', muted: '#a7f3d0' },
+    { name: 'Midnight Navy & Electric Cyan', bg: '#0f172a', surface: '#1e293b', text: '#f8fafc', accent: '#38bdf8', muted: '#94a3b8' },
+    { name: 'Warm Saffron & Espresso', bg: '#fffbeb', surface: '#fef3c7', text: '#451a03', accent: '#d97706', muted: '#78350f' },
+    { name: 'Rich Crimson & Ivory', bg: '#fff1f2', surface: '#ffe4e6', text: '#4c0519', accent: '#e11d48', muted: '#881337' },
+    { name: 'Charcoal Slate & Lime', bg: '#18181b', surface: '#27272a', text: '#fafafa', accent: '#a3e635', muted: '#a1a1aa' },
+    { name: 'Royal Indigo & Soft Lavender', bg: '#eef2ff', surface: '#e0e7ff', text: '#1e1b4b', accent: '#4f46e5', muted: '#4338ca' },
+    { name: 'Terracotta Clay & Sand', bg: '#fdf8f6', surface: '#faedcd', text: '#381d05', accent: '#bc6c25', muted: '#6c584c' },
+    { name: 'Emerald & Crisp White', bg: '#ecfdf5', surface: '#d1fae5', text: '#022c22', accent: '#059669', muted: '#065f46' },
+    { name: 'Bold Cobalt & Tangerine', bg: '#172554', surface: '#1e3a8a', text: '#ffffff', accent: '#fb923c', muted: '#bfdbfe' }
   ];
 
   const layoutBlueprints = [
     {
-      name: "Bold Full-Bleed Editorial Poster",
-      rules: "Oversized expressive display typography across the upper canvas, clean architectural divider lines, and a large bespoke vector illustration anchored in the bottom-right or center-bottom. DO NOT use a 2-column card split or 4-box feature grid."
+      name: 'Bold Full-Bleed Editorial Poster',
+      rules: 'Oversized expressive display typography across the upper canvas, clean architectural divider lines, and a large bespoke vector illustration anchored in the bottom-right or center-bottom. DO NOT use a 2-column card split or 4-box feature grid.'
     },
     {
-      name: "Diagonal Dynamic Split",
-      rules: "Use a bold diagonal polygon backdrop splitting the 1200x900 canvas into two contrasting color zones. Place crisp, concise headline typography on one side and a large, detailed vector illustration of the craft/product on the other. NO mini-card grids."
+      name: 'Diagonal Dynamic Split',
+      rules: 'Use a bold diagonal polygon backdrop splitting the 1200x900 canvas into two contrasting color zones. Place crisp, concise headline typography on one side and a large, detailed vector illustration of the craft/product on the other. NO mini-card grids.'
     },
     {
-      name: "Centered Heritage Emblem & Frame",
-      rules: "Classic vintage poster composition with an ornate double-line border, a bold central circular or shield emblem containing custom vector artwork relevant to the business, curved or stacked bold title above, and a clean bottom ribbon banner."
+      name: 'Centered Heritage Emblem & Frame',
+      rules: 'Classic vintage poster composition with an ornate double-line border, a bold central circular or shield emblem containing custom vector artwork relevant to the business, curved or stacked bold title above, and a clean bottom ribbon banner.'
     },
     {
-      name: "Minimalist Swiss Grid Typography",
-      rules: "Ultra-clean Swiss modernist poster style: huge bold headline on the left/top, generous negative space, geometric accent shapes, and one crisp minimalist vector illustration. Maximum 3 text blocks total—NO tiny boxes or bullet cards."
+      name: 'Minimalist Swiss Grid Typography',
+      rules: 'Ultra-clean Swiss modernist poster style: huge bold headline on the left/top, generous negative space, geometric accent shapes, and one crisp minimalist vector illustration. Maximum 3 text blocks total—NO tiny boxes or bullet cards.'
     },
     {
-      name: "Top Panoramic Illustration + Bold Bottom Strip",
-      rules: "Top 62% of the canvas is an expansive, rich panoramic vector scene illustrating the workshop/service in action. Bottom 38% is a solid high-contrast band featuring the business name, a punchy 3-5 word headline, and a simple walk-in callout."
+      name: 'Top Panoramic Illustration + Bold Bottom Strip',
+      rules: 'Top 62% of the canvas is an expansive, rich panoramic vector scene illustrating the workshop/service in action. Bottom 38% is a solid high-contrast band featuring the business name, a punchy 3-5 word headline, and a simple walk-in callout.'
     },
     {
-      name: "Magazine Cover Spotlight",
-      rules: "Styled like a modern trade magazine cover: bold masthead title at the very top, a centerpiece hero illustration filling the middle of the canvas, and one bold editorial headline overlay at the bottom."
+      name: 'Magazine Cover Spotlight',
+      rules: 'Styled like a modern trade magazine cover: bold masthead title at the very top, a centerpiece hero illustration filling the middle of the canvas, and one bold editorial headline overlay at the bottom.'
     },
     {
-      name: "Circular Spotlight & Floating Badges",
-      rules: "A large glowing or solid geometric circle off-center housing a detailed vector illustration, balanced by clean stacked typography on the opposite side and 1-2 floating pill tags. NO 2x2 rectangular grids."
+      name: 'Circular Spotlight & Floating Badges',
+      rules: 'A large glowing or solid geometric circle off-center housing a detailed vector illustration, balanced by clean stacked typography on the opposite side and 1-2 floating pill tags. NO 2x2 rectangular grids.'
     },
     {
-      name: "Dark Mode Neon / High-Contrast Showcase",
-      rules: "Rich dark background with glowing accent strokes, blueprint/technical line-art accents, bold high-contrast headline, and a sleek vector centerpiece."
+      name: 'Dark Mode Neon / High-Contrast Showcase',
+      rules: 'Rich dark background with glowing accent strokes, blueprint/technical line-art accents, bold high-contrast headline, and a sleek vector centerpiece.'
     }
   ];
 
@@ -272,25 +314,14 @@ CRITICAL TECHNICAL & TYPOGRAPHY RULES:
 4. Spelling & XML safety: Double-check every word for flawless English spelling. Escape any "&" as "&amp;". Ensure every tag is properly closed and has zero duplicate attributes.
 5. Restrictions: NO religious symbols or themes. NO fake customer reviews or star ratings. Keep messaging authentic ("Walk-Ins Welcome • Direct Service").`;
 
-  const modelsToTry = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
   let lastError = 'Unknown error';
 
   for (let k = 0; k < geminiKeys.length; k++) {
     const aiClient = new GoogleGenAI({ apiKey: geminiKeys[k] });
 
-    for (const model of modelsToTry) {
+    for (const model of MODELS_TO_TRY) {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-        const response = await aiClient.models.generateContent({
-          model: model,
-          contents: prompt,
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-
-        let rawText = extractResponseText(response);
+        let rawText = await callGeminiWithBackoff(aiClient, model, prompt, 18000, 2);
         rawText = rawText.replace(/```(?:xml|svg|html)?/gi, '').replace(/```/g, '').trim();
 
         const svgMatch = rawText.match(/<svg[\s\S]*?<\/svg>/i);
@@ -325,4 +356,3 @@ module.exports = {
   generateAutoPostText,
   generateAiPosterSvg
 };
-      
