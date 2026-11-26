@@ -8,8 +8,9 @@ const { generate2LineAIReply, generateAutoPostText, generateAiPosterSvg } = requ
 // Helper delay utility to space out heavy API calls and prevent memory spikes
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Overlap guard to prevent concurrent Auto-Reply runs under heavy multi-location load
+// Overlap guards to prevent concurrent runs
 let isAutoReplyRunning = false;
+let isAutoPostRunning = false;
 
 async function sendCriticalReviewAlert(targetEmail, locationName, reviewerName, starRating, comment, replyText) {
   try {
@@ -40,11 +41,28 @@ async function sendCriticalReviewAlert(targetEmail, locationName, reviewerName, 
   }
 }
 
+// Helper function to get IST date string (YYYY-MM-DD)
+function getISTDateString(dateObj) {
+  return new Date(dateObj).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
+
 // Helper function to compare calendar days in IST
 function isSameDayIST(d1, d2) {
-  const date1Str = new Date(d1).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-  const date2Str = new Date(d2).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-  return date1Str === date2Str;
+  return getISTDateString(d1) === getISTDateString(d2);
+}
+
+// Helper to get current IST hour & minute safely
+function getCurrentISTMinutes(now) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).formatToParts(now);
+
+  const hour = Number(parts.find(p => p.type === 'hour')?.value || 0);
+  const minute = Number(parts.find(p => p.type === 'minute')?.value || 0);
+  return { hour, minute, totalMinutes: hour * 60 + minute };
 }
 
 // 1. Auto-Reply Worker (Every 5 mins)
@@ -90,7 +108,7 @@ cron.schedule('*/5 * * * *', async () => {
           try {
             const reviewerName = review.reviewer?.displayName || 'Customer';
             const starVal = review.starRating === 'FIVE' ? 5 : review.starRating === 'FOUR' ? 4 : review.starRating === 'THREE' ? 3 : review.starRating === 'TWO' ? 2 : 1;
-            
+
             const replyText = await generate2LineAIReply(loc.locationName, reviewerName, starVal, review.comment || '', supportEmail, supportPhone);
 
             if (replyText) {
@@ -124,25 +142,28 @@ cron.schedule('*/5 * * * *', async () => {
   }
 });
 
-// 2. Auto-Post Worker (Every 15 mins)
+// 2. Auto-Post Worker (Every 15 mins: :00, :15, :30, :45)
 cron.schedule('*/15 * * * *', async () => {
-  console.log('[Auto-Post Worker] Checking active configurations...');
+  if (isAutoPostRunning) return;
+  isAutoPostRunning = true;
+
+  const now = new Date();
+  const { hour: currentHour, minute: currentMinute, totalMinutes: currentTotalMinutes } = getCurrentISTMinutes(now);
+  const formattedIST = `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')} IST`;
+  console.log(`[Auto-Post Worker] Checking active configurations at ${formattedIST}...`);
+
   try {
     const activeConfigs = await AutoPostConfig.find({ enabled: true });
     if (!activeConfigs.length) return;
 
-    const now = new Date();
-    const istTimeStr = now.toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour12: false });
-    const [currentHour, currentMinute] = istTimeStr.split(':').map(Number);
-    const currentTotalMinutes = currentHour * 60 + currentMinute;
-
     for (const config of activeConfigs) {
       const [prefHour, prefMinute] = (config.preferredTime || '10:00').split(':').map(Number);
+      if (Number.isNaN(prefHour) || Number.isNaN(prefMinute)) continue;
+
       const prefTotalMinutes = prefHour * 60 + prefMinute;
 
-      // Allow a 30-minute lookup window so custom times (like 12:18) run safely at 12:30
-      const diff = currentTotalMinutes - prefTotalMinutes;
-      if (diff < 0 || diff >= 30) continue;
+      // Not due yet today (e.g. set for 15:43, current check is 15:30) -> wait for 15:45 tick
+      if (currentTotalMinutes < prefTotalMinutes) continue;
 
       const user = await User.findById(config.userId);
       if (!user || (!user.accessToken && !user.refreshToken)) continue;
@@ -159,20 +180,20 @@ cron.schedule('*/15 * * * *', async () => {
       } else {
         const lastPosted = new Date(config.lastPostedAt);
         const diffInDays = (now - lastPosted) / (1000 * 60 * 60 * 24);
-        
-        // Use calendar day comparison so daily posts trigger reliably every new day
+
+        // Once preferredTime has passed today, publish on the very next 15-min tick if not already posted today
         if (config.frequency === 'daily' && !isSameDayIST(now, lastPosted)) {
           shouldPublish = true;
-        } else if (config.frequency === 'weekly' && diffInDays >= 6.8) {
+        } else if (config.frequency === 'weekly' && !isSameDayIST(now, lastPosted) && diffInDays >= 6.5) {
           shouldPublish = true;
-        } else if (config.frequency === 'biweekly' && diffInDays >= 13.8) {
+        } else if (config.frequency === 'biweekly' && !isSameDayIST(now, lastPosted) && diffInDays >= 13.5) {
           shouldPublish = true;
         }
       }
 
       if (shouldPublish) {
         const businessName = targetLocation.locationName || 'Our Business';
-        console.log(`[Auto-Post] Processing scheduled post for business: ${businessName}`);
+        console.log(`[Auto-Post] Processing scheduled post for "${businessName}" (Scheduled: ${config.preferredTime}, Triggered: ${formattedIST})`);
 
         try {
           const postText = await generateAutoPostText(businessName, 'Local Business', config.topics, config.enableFestivals, config.enableReviewSpotlights);
@@ -213,6 +234,8 @@ cron.schedule('*/15 * * * *', async () => {
     }
   } catch (err) {
     console.error('[Auto-Post Worker Error]:', err.message);
+  } finally {
+    isAutoPostRunning = false;
   }
 });
 
