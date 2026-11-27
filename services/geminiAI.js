@@ -16,6 +16,30 @@ const MODELS_TO_TRY = [
   'gemini-4-hydrogen'
 ];
 
+// Lightweight in-memory tracker (no history saved) to steer away from recent consecutive choices
+const recentByBusiness = new Map();
+
+function getRecentMemory(key) {
+  return recentByBusiness.get(key) || { angles: [], layouts: [], lighting: [], mediums: [] };
+}
+
+function recordRecentMemory(key, entry) {
+  const prev = getRecentMemory(key);
+  const next = {
+    angles: [entry.angle, ...prev.angles].filter(Boolean).slice(0, 4),
+    layouts: [entry.layout, ...prev.layouts].filter(Boolean).slice(0, 4),
+    lighting: [entry.lighting, ...prev.lighting].filter(Boolean).slice(0, 4),
+    mediums: [entry.medium, ...prev.mediums].filter(Boolean).slice(0, 4)
+  };
+  recentByBusiness.set(key, next);
+}
+
+function pickUnseen(list, recentList) {
+  const unused = list.filter(item => !recentList.includes(item));
+  const pool = unused.length > 0 ? unused : list;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -50,7 +74,7 @@ function extractResponseText(response) {
   return '';
 }
 
-async function callGeminiWithBackoff(aiClient, model, prompt, timeoutMs = 15000, maxRetries = 1) {
+async function callGeminiWithBackoff(aiClient, model, prompt, timeoutMs = 15000, maxRetries = 1, temperature = 1.0) {
   let attempt = 0;
 
   while (true) {
@@ -61,6 +85,7 @@ async function callGeminiWithBackoff(aiClient, model, prompt, timeoutMs = 15000,
       const response = await aiClient.models.generateContent({
         model: model,
         contents: prompt,
+        config: { temperature },
         signal: controller.signal
       });
       clearTimeout(timeoutId);
@@ -83,6 +108,38 @@ async function callGeminiWithBackoff(aiClient, model, prompt, timeoutMs = 15000,
       await sleep(waitMs);
     }
   }
+}
+
+async function runAcrossKeysAndModels(prompt, logTag, timeoutMs = 15000, temperature = 1.0, parser = null) {
+  if (!geminiKeys || geminiKeys.length === 0) {
+    throw new Error('No valid Gemini API keys configured.');
+  }
+
+  let lastError = 'Unknown error';
+
+  for (const model of MODELS_TO_TRY) {
+    for (let k = 0; k < geminiKeys.length; k++) {
+      const aiClient = new GoogleGenAI({ apiKey: geminiKeys[k] });
+      try {
+        const rawText = await callGeminiWithBackoff(aiClient, model, prompt, timeoutMs, 1, temperature);
+        if (rawText && rawText.trim().length > 0) {
+          if (parser) {
+            const parsed = parser(rawText);
+            if (parsed) return parsed;
+            lastError = `Model ${model} returned unparseable output`;
+            console.log(`[${logTag}] Key ${k + 1}/${geminiKeys.length} (${model}) output format mismatch, trying next...`);
+            continue;
+          }
+          return rawText.trim();
+        }
+      } catch (err) {
+        lastError = err.message;
+        console.log(`[${logTag}] Key ${k + 1}/${geminiKeys.length} (${model}) skipped: ${err.message}`);
+      }
+    }
+  }
+
+  throw new Error(`${logTag} failed across all keys and models (${lastError}).`);
 }
 
 // 1. Review Replies (Model-outer, Key-inner rotation)
@@ -133,38 +190,29 @@ Instructions:
 4. Avoid repetitive sign-offs, quotes, or preambles.`;
   }
 
-  for (const model of MODELS_TO_TRY) {
-    for (let k = 0; k < geminiKeys.length; k++) {
-      const aiClient = new GoogleGenAI({ apiKey: geminiKeys[k] });
-      try {
-        const responseText = await callGeminiWithBackoff(aiClient, model, prompt, 10000, 1);
+  try {
+    const responseText = await runAcrossKeysAndModels(prompt, 'Gemini AI - Reply', 10000, 0.8);
+    const cleanText = responseText.replace(/^["']|["']$/g, '');
+    const sentences = cleanText.match(/[^.!?]+[.!?]+/g);
 
-        if (responseText && responseText.trim().length > 0) {
-          const cleanText = responseText.trim().replace(/^["']|["']$/g, '');
-          const sentences = cleanText.match(/[^.!?]+[.!?]+/g);
-
-          if (sentences && sentences.length >= 2) {
-            return `${sentences[0].trim()} ${sentences[1].trim()}`;
-          } else if (sentences && sentences.length === 1) {
-            return `${sentences[0].trim()}`;
-          }
-          return cleanText;
-        }
-      } catch (err) {
-        console.log(`[Gemini AI - Reply] Key ${k + 1}/${geminiKeys.length} (${model}) skipped: ${err.message}`);
-      }
+    if (sentences && sentences.length >= 2) {
+      return `${sentences[0].trim()} ${sentences[1].trim()}`;
+    } else if (sentences && sentences.length === 1) {
+      return `${sentences[0].trim()}`;
     }
+    return cleanText;
+  } catch (err) {
+    console.error('[Gemini AI - Reply] All keys and model fallbacks exhausted:', err.message);
+    return null;
   }
-
-  console.error('[Gemini AI - Reply] All keys and model fallbacks exhausted.');
-  return null;
 }
 
-// 2. Auto-Post Text (100% Dynamic to Business Name, Category & Topics)
+// 2. Auto-Post Text (Dynamic Angle + Recent Memory Avoidance)
 async function generateAutoPostText(locationName, category, topics, enableFestivals, enableReviewSpotlights) {
-  if (!geminiKeys || geminiKeys.length === 0) {
-    throw new Error('No valid Gemini API keys configured.');
-  }
+  const bName = locationName || 'Our Business';
+  const bCat = category || 'Local Business';
+  const memKey = `${bName}::${bCat}`.toLowerCase();
+  const memory = getRecentMemory(memKey);
 
   const now = new Date();
   const currentDate = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -180,17 +228,23 @@ async function generateAutoPostText(locationName, category, topics, enableFestiv
     'Seasonal / weather readiness check tailored to our customers',
     'Quick spotlight on a signature offering or specialty we take pride in',
     'Warm invitation to visit us in person for honest guidance or service',
-    'Celebrating quality standards, care, and lasting customer trust'
+    'Celebrating quality standards, care, and lasting customer trust',
+    'What customers often overlook until it matters most'
   ];
-  const chosenAngle = copyAngles[Math.floor(Math.random() * copyAngles.length)];
+  const chosenAngle = pickUnseen(copyAngles, memory.angles);
 
-  const prompt = `You are an expert social media copywriter for a business named "${locationName || 'Our Business'}" (Category: ${category || 'Local Business'}).
+  const avoidAnglesNote = memory.angles.length
+    ? `Recent angles already used (do NOT repeat these framing styles): ${memory.angles.join(' | ')}.`
+    : '';
+
+  const prompt = `You are an expert social media copywriter for a business named "${bName}" (Category: ${bCat}).
 Write an authentic, fresh Google Business Profile post tailored specifically to this business:
-- Business Name: ${locationName || 'Our Business'}
-- Business Category: ${category || 'Local Business'}
+- Business Name: ${bName}
+- Business Category: ${bCat}
 - Today's Date: ${currentDate}
 - Topics/Focus: ${topics || 'General business highlights and customer service'}
 - Creative Angle for Today: ${chosenAngle}
+- ${avoidAnglesNote}
 - Seasonal & Event Context: ${festivalContext}
 - Review Spotlight: ${enableReviewSpotlights ? 'Enabled (mention customer satisfaction subtly without quoting fake reviews)' : 'Disabled'}
 
@@ -201,28 +255,12 @@ Requirements:
 4. Include 1 clear call-to-action (walk-ins or phone calls only, NO online booking) and 2 relevant hashtags.
 5. Output ONLY the final post text, no labels or quotes.`;
 
-  let lastError = 'Unknown error';
-
-  for (const model of MODELS_TO_TRY) {
-    for (let k = 0; k < geminiKeys.length; k++) {
-      const aiClient = new GoogleGenAI({ apiKey: geminiKeys[k] });
-      try {
-        const responseText = await callGeminiWithBackoff(aiClient, model, prompt, 10000, 1);
-
-        if (responseText && responseText.trim().length > 0) {
-          return responseText.trim().replace(/^["']|["']$/g, '');
-        }
-      } catch (err) {
-        lastError = err.message;
-        console.log(`[Gemini AI - Post Text] Key ${k + 1}/${geminiKeys.length} (${model}) skipped: ${err.message}`);
-      }
-    }
-  }
-
-  throw new Error(`AI Post text generation failed across all keys and models (${lastError}).`);
+  const text = await runAcrossKeysAndModels(prompt, 'Gemini AI - Post Text', 10000, 1.0);
+  recordRecentMemory(memKey, { angle: chosenAngle });
+  return text.replace(/^["']|["']$/g, '');
 }
 
-// 3. Dynamic Realistic SVG Poster Generator — 100% Universal Across Any Business
+// 3. Two-Step Art Director + SVG Illustrator (Orthogonal Matrix + Memory Avoidance)
 async function generateAiPosterSvg(locationName, category, topics, enableFestivals) {
   if (!geminiKeys || geminiKeys.length === 0) {
     throw new Error('No valid Gemini API keys configured.');
@@ -231,122 +269,158 @@ async function generateAiPosterSvg(locationName, category, topics, enableFestiva
   const bName = locationName || 'Our Business';
   const bCat = category || 'Local Business';
   const rawTopic = topics && topics.trim().length > 2 ? topics.trim() : bCat;
-  const randomSeed = Math.floor(100000 + Math.random() * 900000);
+  const memKey = `${bName}::${bCat}`.toLowerCase();
+  const memory = getRecentMemory(memKey);
 
   const now = new Date();
   const currentDate = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
-  const festivalContext = enableFestivals
-    ? `Subtly reflect ${currentDate} weather/season or secular national spirit in the palette/mood (strictly NO religious symbols).`
-    : 'Timeless visual mood.';
-
-  const artStyles = [
-    {
-      name: 'Bright Daylight Editorial Poster',
-      bgPalette: 'Crisp sunlit ivory (#fdfbf7), warm sage green (#2d6a4f), and terracotta coral (#e76f51)',
-      subjectDirective: 'An expansive, sunlit outdoor or open-air environmental scene tailored to the business industry, with crisp natural shadows and open sky/wall space for minimal typography',
-      lighting: 'Bright natural morning sunlight, crisp cast shadows, airy depth, clean layered gradients'
-    },
-    {
-      name: 'Retro Vintage Screenprint Poster',
-      bgPalette: 'Warm cream paper (#f4ebd9), deep navy (#1d3557), burnt sienna (#c84b31), and mustard ochre (#e9c46a)',
-      subjectDirective: 'A bold vintage print poster featuring stylized geometric sunbeams, classic framing lines, and an iconic visual motif representing the business craft or service',
-      lighting: 'Warm screen-printed ink layers, subtle halftone/grain texture, bold contrast bands'
-    },
-    {
-      name: 'Minimalist Modernist Geometry',
-      bgPalette: 'Soft alabaster (#fafafa), cobalt blue (#2563eb), and warm sand (#f5e6cc)',
-      subjectDirective: 'Architectural circles, bold overlapping geometric shapes, and a clean central vector symbol tailored to the business industry with generous negative space',
-      lighting: 'Soft diffused studio light, subtle elevation gradients, razor-sharp edges'
-    },
-    {
-      name: 'Golden Hour Scenic & Atmospheric Art',
-      bgPalette: 'Warm honey gold (#fef3c7), deep slate (#1e293b), and sunset amber (#f59e0b)',
-      subjectDirective: 'A dramatic golden-hour silhouette or scenic horizon composition inspired by the business domain, with rich atmospheric depth',
-      lighting: 'Golden hour warm rim lighting, layered atmospheric depth, soft mist gradients'
-    },
-    {
-      name: 'Fresh Mint & Tactile Studio Craft',
-      bgPalette: 'Soft mint cream (#f0fdf4), deep emerald (#065f46), and warm copper (#c2410c)',
-      subjectDirective: 'An overhead flat-lay or three-quarter studio composition showcasing authentic tools, textures, and materials of the business with clean breathing room',
-      lighting: 'Soft directional daylight, gentle tonal shading, tactile material detail'
-    },
-    {
-      name: 'Bold Editorial Typography & Emblem',
-      bgPalette: 'Warm terracotta clay (#fdf4f0), deep burgundy (#4a0e17), and bright gold (#eab308)',
-      subjectDirective: 'An editorial poster composition where refined display typography and a bespoke central vector emblem anchor the canvas',
-      lighting: 'Balanced studio key light, rich warm gradients, clean vector linework'
-    },
-    {
-      name: 'Nocturnal Spotlight & Rich Contrast',
-      bgPalette: 'Deep charcoal (#111827), warm amber glow (#f59e0b), and soft cream (#f9fafb)',
-      subjectDirective: 'A dramatic close-up hero subject from the business domain illuminated by a warm directional spotlight against deep ambient shadow',
-      lighting: 'Warm tungsten key light, soft rim highlights, subtle vignette depth'
-    }
+  const layouts = [
+    'Asymmetric split-screen: left 42% bold color panel with stacked minimal title, right 58% full-bleed scene',
+    'Top-to-bottom magazine composition: clean editorial title bar across the top or bottom with an expansive wide scene filling the rest',
+    'Left-column Swiss typographic poster: large clean headline on the left with layered scene/visuals occupying the right side',
+    'Full-bleed atmospheric scene with a clean floating lower caption strip and open breathing space',
+    'Diagonal two-zone composition splitting the canvas at an angle between scene and clean title space',
+    'Asymmetric corner-anchored scene with generous open negative space framing minimal typography'
   ];
 
-  const chosenStyle = artStyles[Math.floor(Math.random() * artStyles.length)];
+  const cameras = [
+    'Wide environmental perspective showing context and depth',
+    'Close-up angled view highlighting tactile materials and craft',
+    'Elevated three-quarter angle across the workspace or setting',
+    'Low-angle perspective looking upward toward warm light',
+    'Over-the-shoulder action framing with foreground depth'
+  ];
 
-  const prompt = `Create a completely fresh, distinct 1200x900 SVG poster (Seed #${randomSeed}) tailored specifically to the business below:
+  const lightingOptions = [
+    'Crisp morning daylight with soft natural shadows',
+    'Warm golden-hour rim light and rich atmospheric depth',
+    'Bright airy high-key natural light with clean contrast',
+    'Soft overcast window light with gentle tonal gradients',
+    'Warm afternoon light with distinct directional shadows'
+  ];
+
+  const mediums = [
+    'Layered paper-cut / architectural depth vector illustration',
+    'Mid-century editorial print style with clean vector contours',
+    'Modern crisp vector illustration with multi-stop gradients',
+    'Tactile textured vector artwork with subtle grain'
+  ];
+
+  const chosenLayout = pickUnseen(layouts, memory.layouts);
+  const chosenCamera = cameras[Math.floor(Math.random() * cameras.length)];
+  const chosenLighting = pickUnseen(lightingOptions, memory.lighting);
+  const chosenMedium = pickUnseen(mediums, memory.mediums);
+
+  const festivalContext = enableFestivals
+    ? `Subtly reflect ${currentDate} season/weather or non-religious occasion in mood/colors (NO religious symbols).`
+    : 'Timeless, business-appropriate mood.';
+
+  const bannedRecentNote = [
+    memory.layouts.length ? `Do NOT use these recent layouts: ${memory.layouts.join(' ; ')}.` : '',
+    memory.lighting.length ? `Do NOT use these recent lighting setups: ${memory.lighting.join(' ; ')}.` : ''
+  ].filter(Boolean).join(' ');
+
+  // Step 1: Art Director creates a fresh, non-repetitive scene brief
+  const artDirectorPrompt = `You are an Art Director creating a completely fresh 1200x900 visual brief for a business.
 - Business Name: "${bName}"
 - Business Category: "${bCat}"
 - Focus Topic: "${rawTopic}"
-- Style Direction: "${chosenStyle.name}"
-- Seasonal Context: ${festivalContext}
+- Seasonal Note: ${festivalContext}
+- Assigned Layout: ${chosenLayout}
+- Assigned Camera: ${chosenCamera}
+- Assigned Lighting: ${chosenLighting}
+- Assigned Medium: ${chosenMedium}
+${bannedRecentNote}
 
-Infer the exact industry, setting, tools, products, or atmosphere from "${bName}", "${bCat}", and "${rawTopic}" so the illustration feels genuinely custom-made for this specific business. Vary your visual concept every time so consecutive posts never look alike.
+STRICT RULES:
+- Never put a lone centered badge, circular emblem, corner brackets, or dark spotlight icon unless specifically requested above.
+- Keep text minimal: ONLY "${bName}" and one short 2-to-4 word title/tagline. No paragraphs, lists, grids, or star ratings.
+- Output ONLY valid JSON (no markdown fences) with keys:
+  "shortTitle" (string, 2-4 words),
+  "subjectAndAction" (string, 1-2 sentences tailored to "${bName}" / "${bCat}" / "${rawTopic}"),
+  "palette" (array of 4 hex color strings: [bg, secondary, accent, text])`;
 
-5-PART PROMPT FORMULA:
-[Subject & Action]: ${chosenStyle.subjectDirective}, customized authentically for "${bName}" (${bCat} — ${rawTopic}).
-[Realistic Shading & Lighting]: ${chosenStyle.lighting}. Use multi-stop <linearGradient>/<radialGradient> and layered depth.
-[Texture & Material Detail]: ${chosenStyle.bgPalette}. Add realistic surface/material detail and subtle SVG filter grain where fitting.
-[Composition & Camera/Angle]: Distinct composition for Seed #${randomSeed}—vary framing, focal placement, and visual rhythm.
-[SVG / Vector Specs]: Clean scalable vector paths, sharp contours, organized <g> layers, 1200x900 viewBox.
+  let brief = {
+    shortTitle: rawTopic.split(',')[0].trim().slice(0, 26) || 'Craft & Care',
+    subjectAndAction: `Authentic scene tailored to ${bName} (${bCat}) focusing on ${rawTopic}.`,
+    palette: ['#f8f5ee', '#1e3a2f', '#d97706', '#1c1917']
+  };
 
-MINIMAL TEXT RULE:
-- Keep text minimal and clean—ONLY:
-  1) Business Name: "${bName}"
-  2) Short 2-to-4 word title/phrase (${rawTopic.split(',')[0].trim().slice(0, 26)})
-- No paragraphs, no bullet lists, no 2x2 grids, no star ratings, no religious symbols.
-
-OUTPUT RULES:
-- Return ONLY raw <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">...</svg> with no markdown fences or extra text.
-- Start with a full-bleed 1200x900 background <rect>, keep all text inside x=70..1130 and y=80..840, and escape "&" as "&amp;".`;
-
-  let lastError = 'Unknown error';
-
-  for (const model of MODELS_TO_TRY) {
-    for (let k = 0; k < geminiKeys.length; k++) {
-      const aiClient = new GoogleGenAI({ apiKey: geminiKeys[k] });
-      try {
-        let rawText = await callGeminiWithBackoff(aiClient, model, prompt, 20000, 1);
-        rawText = rawText.replace(/```(?:xml|svg|html)?/gi, '').replace(/```/g, '').trim();
-
-        const svgMatch = rawText.match(/<svg[\s\S]*?<\/svg>/i);
-
-        if (svgMatch && svgMatch[0]) {
-          let svg = svgMatch[0].trim();
-
-          if (!/xmlns=/.test(svg)) {
-            svg = svg.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
-          }
-
-          svg = svg.replace(/class="([^"]*)"\s+class="[^"]*"/g, 'class="$1"');
-          svg = svg.replace(/&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)/g, '&amp;');
-
-          return svg;
-        } else {
-          lastError = `Model ${model} returned non-SVG output`;
-          console.log(`[Gemini AI - SVG] Key ${k + 1}/${geminiKeys.length} (${model}) returned non-SVG output, trying next...`);
+  try {
+    const briefRaw = await runAcrossKeysAndModels(
+      artDirectorPrompt,
+      'Gemini AI - Art Director',
+      12000,
+      1.0,
+      (raw) => {
+        const cleaned = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+        const match = cleaned.match(/\{[\s\S]*\}/);
+        if (!match) return null;
+        const parsed = JSON.parse(match[0]);
+        if (parsed && parsed.subjectAndAction && Array.isArray(parsed.palette) && parsed.palette.length >= 4) {
+          return parsed;
         }
-      } catch (err) {
-        lastError = err.message;
-        console.log(`[Gemini AI - SVG] Key ${k + 1}/${geminiKeys.length} (${model}) skipped: ${err.message}`);
+        return null;
       }
-    }
+    );
+    brief = {
+      shortTitle: String(briefRaw.shortTitle || brief.shortTitle).slice(0, 32),
+      subjectAndAction: String(briefRaw.subjectAndAction),
+      palette: briefRaw.palette.slice(0, 4)
+    };
+  } catch (err) {
+    console.log(`[Gemini AI - Art Director] Using fallback brief: ${err.message}`);
   }
 
-  throw new Error(`AI Banner generation failed (${lastError}).`);
+  const [bgCol, secCol, accCol, txtCol] = brief.palette;
+
+  // Step 2: SVG Illustrator renders the brief using the 5-part formula
+  const svgPrompt = `Generate a clean, realistic 1200x900 SVG poster using this 5-part formula:
+[Subject & Action] + [Realistic Shading & Lighting] + [Texture & Material Detail] + [Composition & Camera/Angle] + [SVG / Vector Specs]
+
+1. [Subject & Action]: ${brief.subjectAndAction}
+2. [Realistic Shading & Lighting]: ${chosenLighting}. Use multi-stop <linearGradient> and <radialGradient> fills for depth.
+3. [Texture & Material Detail]: ${chosenMedium}. Palette: background ${bgCol}, surface ${secCol}, accent ${accCol}, text ${txtCol}. Add subtle SVG <filter> grain/texture where fitting.
+4. [Composition & Camera/Angle]: ${chosenCamera} with layout: ${chosenLayout}.
+5. [SVG / Vector Specs]: Clean scalable vector paths, sharp contours, layered <g> groups, 1200x900 viewBox.
+
+MINIMAL TEXT (ONLY THESE TWO):
+- "${bName}"
+- "${brief.shortTitle}"
+No extra text blocks, badges, ratings, or religious symbols.
+
+STRICT OUTPUT:
+- Return ONLY raw <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">...</svg> with zero markdown fences or explanations.
+- Start with <rect width="1200" height="900" fill="${bgCol}"/>, keep text inside x=70..1130 and y=80..840, and escape "&" as "&amp;".`;
+
+  const svg = await runAcrossKeysAndModels(
+    svgPrompt,
+    'Gemini AI - SVG',
+    20000,
+    1.0,
+    (raw) => {
+      const cleaned = raw.replace(/```(?:xml|svg|html)?/gi, '').replace(/```/g, '').trim();
+      const svgMatch = cleaned.match(/<svg[\s\S]*?<\/svg>/i);
+      if (!svgMatch || !svgMatch[0]) return null;
+
+      let out = svgMatch[0].trim();
+      if (!/xmlns=/.test(out)) {
+        out = out.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+      }
+      out = out.replace(/class="([^"]*)"\s+class="[^"]*"/g, 'class="$1"');
+      out = out.replace(/&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)/g, '&amp;');
+      return out;
+    }
+  );
+
+  recordRecentMemory(memKey, {
+    layout: chosenLayout,
+    lighting: chosenLighting,
+    medium: chosenMedium
+  });
+
+  return svg;
 }
 
 module.exports = {
